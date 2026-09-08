@@ -84,3 +84,14 @@ def get_current_teacher(
         )
 
     return current_user
+
+def get_current_parent(
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role.upper() != "PARENT":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Parent access required",
+        )
+
+    return current_user

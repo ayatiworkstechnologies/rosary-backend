@@ -5,6 +5,11 @@ from fastapi import (
     Query,
     status,
 )
+from sqlalchemy import or_
+from app.models.circular import Circular
+from app.schemas.circular import (
+    CircularListResponse,
+)
 
 from sqlalchemy.orm import Session
 
@@ -47,6 +52,20 @@ from app.schemas.result import (
     ResultSheetResponse,
 )
 
+from app.models.exam_schedule import ExamSchedule
+from app.schemas.exam_schedule import (
+    ExamScheduleListResponse,
+)
+from app.models.school_event import SchoolEvent
+from app.schemas.school_event import (
+    SchoolEventListResponse,
+)
+from app.models.teacher_profile import (
+    TeacherProfile,
+)
+from app.schemas.teacher_profile import (
+    TeacherProfileResponse,
+)
 
 
 router = APIRouter(
@@ -497,6 +516,174 @@ def save_class_results(
         "total":
             len(payload.results),
     }
+# =========================================================
+# GET TEACHER EXAM SCHEDULE
+# =========================================================
+
+@router.get(
+    "/exam-schedule",
+    response_model=ExamScheduleListResponse,
+)
+def get_teacher_exam_schedule(
+    class_id: int | None = None,
+    exam_id: int | None = None,
+    db: Session = Depends(get_db),
+    current_teacher: User = Depends(
+        get_current_teacher
+    ),
+):
+    # -----------------------------------------------------
+    # Teacher assigned classes
+    # -----------------------------------------------------
+
+    teacher_assignments = (
+        db.query(TeacherClass)
+        .filter(
+            TeacherClass.teacher_user_id
+            == current_teacher.id
+        )
+        .all()
+    )
+
+    assigned_class_ids = [
+        item.class_id
+        for item in teacher_assignments
+    ]
+
+    if not assigned_class_ids:
+        return {
+            "total": 0,
+            "schedules": [],
+        }
+
+    # -----------------------------------------------------
+    # If specific class requested, verify teacher access
+    # -----------------------------------------------------
+
+    if (
+        class_id is not None
+        and class_id
+        not in assigned_class_ids
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "You are not assigned "
+                "to this class"
+            ),
+        )
+
+    # -----------------------------------------------------
+    # Query schedule
+    # -----------------------------------------------------
+
+    query = (
+        db.query(
+            ExamSchedule,
+            Exam,
+            SchoolClass,
+        )
+        .join(
+            Exam,
+            Exam.id
+            == ExamSchedule.exam_id,
+        )
+        .join(
+            SchoolClass,
+            SchoolClass.id
+            == ExamSchedule.class_id,
+        )
+        .filter(
+            ExamSchedule.class_id.in_(
+                assigned_class_ids
+            ),
+            Exam.is_active.is_(True),
+            SchoolClass.is_active.is_(True),
+        )
+    )
+
+    # -----------------------------------------------------
+    # Class filter
+    # -----------------------------------------------------
+
+    if class_id is not None:
+        query = query.filter(
+            ExamSchedule.class_id
+            == class_id
+        )
+
+    # -----------------------------------------------------
+    # Exam filter
+    # -----------------------------------------------------
+
+    if exam_id is not None:
+        query = query.filter(
+            ExamSchedule.exam_id
+            == exam_id
+        )
+
+    rows = (
+        query
+        .order_by(
+            ExamSchedule.exam_date.asc(),
+            ExamSchedule.start_time.asc(),
+        )
+        .all()
+    )
+
+    schedules = []
+
+    for (
+        schedule,
+        exam,
+        school_class,
+    ) in rows:
+
+        schedules.append(
+            {
+                "id":
+                    schedule.id,
+
+                "exam_id":
+                    exam.id,
+
+                "exam_name":
+                    exam.name,
+
+                "class_id":
+                    school_class.id,
+
+                "class_name":
+                    f"{school_class.name} - "
+                    f"{school_class.section}",
+
+                "subject":
+                    schedule.subject,
+
+                "exam_date":
+                    schedule.exam_date,
+
+                "start_time":
+                    schedule.start_time,
+
+                "end_time":
+                    schedule.end_time,
+
+                "room":
+                    schedule.room,
+
+                "instructions":
+                    schedule.instructions,
+            }
+        )
+
+    return {
+        "total":
+            len(schedules),
+
+        "schedules":
+            schedules,
+    }
 
 def calculate_grade(
     obtained_marks: float,
@@ -584,6 +771,368 @@ def get_teacher_classes(
         }
         for school_class, subject in rows
     ]
+
+# =========================================================
+# GET TEACHER CIRCULARS
+# =========================================================
+
+@router.get(
+    "/circulars",
+    response_model=CircularListResponse,
+)
+def get_teacher_circulars(
+    category: str | None = None,
+    search: str | None = None,
+    db: Session = Depends(get_db),
+    current_teacher: User = Depends(
+        get_current_teacher
+    ),
+):
+    # -----------------------------------------------------
+    # Get teacher assigned classes
+    # -----------------------------------------------------
+
+    assignments = (
+        db.query(TeacherClass)
+        .filter(
+            TeacherClass.teacher_user_id
+            == current_teacher.id
+        )
+        .all()
+    )
+
+    assigned_class_ids = [
+        item.class_id
+        for item in assignments
+    ]
+
+    # -----------------------------------------------------
+    # Base query
+    # -----------------------------------------------------
+
+    query = (
+        db.query(Circular)
+        .filter(
+            Circular.is_active.is_(True)
+        )
+    )
+
+    # -----------------------------------------------------
+    # Audience filter
+    # -----------------------------------------------------
+
+    audience_conditions = [
+        Circular.audience == "ALL",
+        Circular.audience == "TEACHER",
+    ]
+
+    if assigned_class_ids:
+        audience_conditions.append(
+            (
+                Circular.audience == "CLASS"
+            )
+            &
+            (
+                Circular.class_id.in_(
+                    assigned_class_ids
+                )
+            )
+        )
+
+    query = query.filter(
+        or_(
+            *audience_conditions
+        )
+    )
+
+    # -----------------------------------------------------
+    # Category filter
+    # -----------------------------------------------------
+
+    if category:
+        clean_category = (
+            category.strip()
+        )
+
+        if clean_category:
+            query = query.filter(
+                Circular.category
+                == clean_category
+            )
+
+    # -----------------------------------------------------
+    # Search filter
+    # -----------------------------------------------------
+
+    if search:
+        search_value = (
+            f"%{search.strip()}%"
+        )
+
+        query = query.filter(
+            or_(
+                Circular.title.ilike(
+                    search_value
+                ),
+
+                Circular.description.ilike(
+                    search_value
+                ),
+
+                Circular.category.ilike(
+                    search_value
+                ),
+            )
+        )
+
+    # -----------------------------------------------------
+    # Execute
+    # -----------------------------------------------------
+
+    circular_rows = (
+        query
+        .order_by(
+            Circular.published_date.desc(),
+            Circular.id.desc(),
+        )
+        .all()
+    )
+
+    circulars = []
+
+    for circular in circular_rows:
+
+        class_name = None
+
+        if circular.class_id:
+            school_class = (
+                db.query(SchoolClass)
+                .filter(
+                    SchoolClass.id
+                    == circular.class_id
+                )
+                .first()
+            )
+
+            if school_class:
+                class_name = (
+                    f"{school_class.name} - "
+                    f"{school_class.section}"
+                )
+
+        circulars.append(
+            {
+                "id":
+                    circular.id,
+
+                "title":
+                    circular.title,
+
+                "category":
+                    circular.category,
+
+                "description":
+                    circular.description,
+
+                "published_date":
+                    circular.published_date,
+
+                "audience":
+                    circular.audience,
+
+                "class_id":
+                    circular.class_id,
+
+                "class_name":
+                    class_name,
+
+                "attachment_url":
+                    circular.attachment_url,
+            }
+        )
+
+    return {
+        "total":
+            len(circulars),
+
+        "circulars":
+            circulars,
+    }
+
+# =========================================================
+# GET TEACHER SCHOOL CALENDAR
+# =========================================================
+
+@router.get(
+    "/calendar",
+    response_model=SchoolEventListResponse,
+)
+def get_teacher_calendar(
+    event_type: str | None = None,
+    db: Session = Depends(get_db),
+    current_teacher: User = Depends(
+        get_current_teacher
+    ),
+):
+    # -----------------------------------------------------
+    # Teacher assigned classes
+    # -----------------------------------------------------
+
+    assignments = (
+        db.query(TeacherClass)
+        .filter(
+            TeacherClass.teacher_user_id
+            == current_teacher.id
+        )
+        .all()
+    )
+
+    assigned_class_ids = [
+        item.class_id
+        for item in assignments
+    ]
+
+    # -----------------------------------------------------
+    # Audience permissions
+    # -----------------------------------------------------
+
+    audience_conditions = [
+        SchoolEvent.audience == "ALL",
+        SchoolEvent.audience == "TEACHER",
+    ]
+
+    if assigned_class_ids:
+        audience_conditions.append(
+            (
+                SchoolEvent.audience
+                == "CLASS"
+            )
+            &
+            (
+                SchoolEvent.class_id.in_(
+                    assigned_class_ids
+                )
+            )
+        )
+
+    # -----------------------------------------------------
+    # Base query
+    # -----------------------------------------------------
+
+    query = (
+        db.query(SchoolEvent)
+        .filter(
+            SchoolEvent.is_active.is_(True),
+            or_(
+                *audience_conditions
+            ),
+        )
+    )
+
+    # -----------------------------------------------------
+    # Event type filter
+    # -----------------------------------------------------
+
+    if event_type:
+        clean_type = (
+            event_type
+            .strip()
+            .upper()
+        )
+
+        if clean_type:
+            query = query.filter(
+                SchoolEvent.event_type
+                == clean_type
+            )
+
+    # -----------------------------------------------------
+    # Order
+    # -----------------------------------------------------
+
+    rows = (
+        query
+        .order_by(
+            SchoolEvent.start_date.asc(),
+            SchoolEvent.start_time.asc(),
+        )
+        .all()
+    )
+
+    events = []
+
+    # -----------------------------------------------------
+    # Build response
+    # -----------------------------------------------------
+
+    for event in rows:
+
+        class_name = None
+
+        if event.class_id:
+
+            school_class = (
+                db.query(SchoolClass)
+                .filter(
+                    SchoolClass.id
+                    == event.class_id
+                )
+                .first()
+            )
+
+            if school_class:
+                class_name = (
+                    f"{school_class.name} - "
+                    f"{school_class.section}"
+                )
+
+        events.append(
+            {
+                "id":
+                    event.id,
+
+                "title":
+                    event.title,
+
+                "event_type":
+                    event.event_type,
+
+                "description":
+                    event.description,
+
+                "start_date":
+                    event.start_date,
+
+                "end_date":
+                    event.end_date,
+
+                "start_time":
+                    event.start_time,
+
+                "end_time":
+                    event.end_time,
+
+                "location":
+                    event.location,
+
+                "audience":
+                    event.audience,
+
+                "class_id":
+                    event.class_id,
+
+                "class_name":
+                    class_name,
+            }
+        )
+
+    return {
+        "total":
+            len(events),
+
+        "events":
+            events,
+    }
 # =========================================================
 # GET CLASS HOMEWORK
 # =========================================================
@@ -1399,4 +1948,165 @@ def get_class_students(
             }
             for student in students
         ],
+    }
+
+# =========================================================
+# GET TEACHER PROFILE
+# =========================================================
+
+@router.get(
+    "/profile",
+    response_model=TeacherProfileResponse,
+)
+def get_teacher_profile(
+    db: Session = Depends(get_db),
+    current_teacher: User = Depends(
+        get_current_teacher
+    ),
+):
+    # -----------------------------------------------------
+    # Teacher extended profile
+    # -----------------------------------------------------
+
+    profile = (
+        db.query(TeacherProfile)
+        .filter(
+            TeacherProfile.user_id
+            == current_teacher.id
+        )
+        .first()
+    )
+
+    # -----------------------------------------------------
+    # Assigned classes
+    # -----------------------------------------------------
+
+    assignments = (
+        db.query(
+            TeacherClass,
+            SchoolClass,
+        )
+        .join(
+            SchoolClass,
+            SchoolClass.id
+            == TeacherClass.class_id,
+        )
+        .filter(
+            TeacherClass.teacher_user_id
+            == current_teacher.id,
+
+            SchoolClass.is_active.is_(True),
+        )
+        .order_by(
+            SchoolClass.name,
+            SchoolClass.section,
+        )
+        .all()
+    )
+
+    assigned_classes = []
+
+    for (
+        assignment,
+        school_class,
+    ) in assignments:
+
+        assigned_classes.append(
+            {
+                "class_id":
+                    school_class.id,
+
+                "class_name":
+                    f"{school_class.name} - "
+                    f"{school_class.section}",
+
+                "subject":
+                    assignment.subject,
+
+                "academic_year":
+                    school_class.academic_year,
+            }
+        )
+
+    # -----------------------------------------------------
+    # Response
+    # -----------------------------------------------------
+
+    return {
+        "user_id":
+            current_teacher.id,
+
+        "name":
+            current_teacher.name,
+
+        "username":
+            current_teacher.username,
+
+        "email":
+            current_teacher.email,
+
+        "role":
+            current_teacher.role,
+
+        "is_active":
+            current_teacher.is_active,
+
+        "employee_id":
+            (
+                profile.employee_id
+                if profile
+                else None
+            ),
+
+        "phone":
+            (
+                profile.phone
+                if profile
+                else None
+            ),
+
+        "designation":
+            (
+                profile.designation
+                if profile
+                else None
+            ),
+
+        "department":
+            (
+                profile.department
+                if profile
+                else None
+            ),
+
+        "qualification":
+            (
+                profile.qualification
+                if profile
+                else None
+            ),
+
+        "experience_years":
+            (
+                profile.experience_years
+                if profile
+                else None
+            ),
+
+        "joining_date":
+            (
+                profile.joining_date
+                if profile
+                else None
+            ),
+
+        "profile_image_url":
+            (
+                profile.profile_image_url
+                if profile
+                else None
+            ),
+
+        "assigned_classes":
+            assigned_classes,
     }
