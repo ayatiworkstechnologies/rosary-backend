@@ -369,3 +369,49 @@ except Exception as error:
 finally:
 
     db.close()
+
+{
+    "title":
+        "Parent Teacher Meeting",
+
+    "event_type":
+        "MEETING",
+
+    "description":
+        (
+            "Parents are invited to meet "
+            "class teachers and discuss "
+            "student academic progress."
+        ),
+
+    "start_date":
+        date(
+            2026,
+            9,
+            26
+        ),
+
+    "end_date":
+        None,
+
+    "start_time":
+        time(
+            10,
+            0
+        ),
+
+    "end_time":
+        time(
+            13,
+            0
+        ),
+
+    "location":
+        "School Campus",
+
+    "audience":
+        "PARENT",
+
+    "class_id":
+        None,
+},

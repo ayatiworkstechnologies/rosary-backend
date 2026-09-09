@@ -286,3 +286,35 @@ except Exception as error:
 finally:
 
     db.close()
+
+
+{
+    "title":
+        "Parent Teacher Meeting Notice",
+
+    "category":
+        "Meeting",
+
+    "description":
+        (
+            "Parents are requested to attend "
+            "the Parent Teacher Meeting to "
+            "discuss student academic progress."
+        ),
+
+    "published_date":
+        date(
+            2026,
+            9,
+            9
+        ),
+
+    "audience":
+        "PARENT",
+
+    "class_id":
+        None,
+
+    "attachment_url":
+        None,
+},
