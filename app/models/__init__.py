@@ -58,7 +58,9 @@ from app.models.school_event import SchoolEvent
 from app.models.teacher_profile import TeacherProfile
 
 from app.models.parent_student import ParentStudent
-
+from app.models.student_fee import StudentFee
+from app.models.download_form import DownloadForm
+from app.models.parent_profile import ParentProfile
 # =========================================================
 # OPTIONAL EXPORT LIST
 # =========================================================
@@ -76,5 +78,8 @@ __all__ = [
     "Circular",
     "SchoolEvent",
     "TeacherProfile",
-     "ParentStudent",
+    "ParentStudent",
+    "StudentFee",
+    "DownloadForm", 
+    "ParentProfile",
 ]
