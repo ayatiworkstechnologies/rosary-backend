@@ -18,6 +18,12 @@ from app.api.v1.admin.dashboard import router as admin_dashboard_router
 from app.api.v1.admin.classes import (
     router as admin_classes_router,
 )
+from app.api.v1.admin.students import (
+    router as admin_students_router,
+)
+from app.api.v1.admin.parent_links import (
+    router as admin_parent_links_router,
+)
 
 
 
@@ -125,5 +131,13 @@ app.include_router(
 )
 app.include_router(
     admin_classes_router,
+    prefix="/api/v1",
+)
+app.include_router(
+    admin_students_router,
+    prefix="/api/v1",
+)
+app.include_router(
+    admin_parent_links_router,
     prefix="/api/v1",
 )
