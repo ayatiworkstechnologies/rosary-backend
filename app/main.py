@@ -24,8 +24,18 @@ from app.api.v1.admin.students import (
 from app.api.v1.admin.parent_links import (
     router as admin_parent_links_router,
 )
-
-
+from app.api.v1.admin.teachers import (
+    router as admin_teachers_router,
+)
+from app.api.v1.admin.circulars import (
+    router as admin_circulars_router,
+)
+from app.api.v1.admin.school_events import (
+    router as admin_school_events_router,
+)
+from app.api.v1.admin.fees import (
+    router as admin_fees_router,
+)
 
 # =========================================================
 # LOGGING
@@ -139,5 +149,22 @@ app.include_router(
 )
 app.include_router(
     admin_parent_links_router,
+    prefix="/api/v1",
+)
+app.include_router(
+    admin_teachers_router,
+    prefix="/api/v1",
+)
+
+app.include_router(
+    admin_circulars_router,
+    prefix="/api/v1",
+)
+app.include_router(
+    admin_school_events_router,
+    prefix="/api/v1",
+)
+app.include_router(
+    admin_fees_router,
     prefix="/api/v1",
 )
