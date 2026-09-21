@@ -12,6 +12,7 @@ router = APIRouter(
 
 
 @router.get("/stats")
+@router.get("", include_in_schema=False)
 def get_dashboard_stats(
     db: Session = Depends(get_db),
 ):

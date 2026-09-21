@@ -2267,6 +2267,11 @@ def get_child_fees(
     "/download-forms",
     response_model=ParentDownloadFormListResponse,
 )
+@router.get(
+    "/downloads",
+    response_model=ParentDownloadFormListResponse,
+    include_in_schema=False,
+)
 def get_parent_download_forms(
     student_id: int | None = None,
     category: str | None = None,
