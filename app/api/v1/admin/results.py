@@ -20,11 +20,14 @@ from app.schemas.admin_result import (
     AdminResultResponse,
     AdminResultUpdate,
 )
-
+from app.dependencies import get_current_admin
 
 router = APIRouter(
     prefix="/api/v1/admin/results",
     tags=["Admin Results"],
+    dependencies=[
+        Depends(get_current_admin)
+    ],
 )
 
 

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.core.security import hash_password
 from app.database import get_db
 from app.models.user import User
+from app.dependencies import get_current_admin
 
 from app.schemas.admin_user import (
     AdminUserCreate,
@@ -25,6 +26,9 @@ from app.schemas.admin_user import (
 router = APIRouter(
     prefix="/api/v1/admin/users",
     tags=["Admin Users"],
+    dependencies=[
+        Depends(get_current_admin)
+    ],
 )
 
 
