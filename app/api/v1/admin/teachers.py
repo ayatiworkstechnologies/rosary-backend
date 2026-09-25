@@ -77,10 +77,13 @@ def get_admin_teachers(
                     tp.id AS teacher_id,
                     tp.user_id,
                     tp.employee_id,
+                    tp.date_of_birth,
+                    tp.gender,
                     tp.phone,
                     tp.designation,
                     tp.department,
                     tp.qualification,
+                    tp.specialization,
                     tp.experience_years,
                     tp.joining_date,
                     tp.profile_image_url,
@@ -109,10 +112,13 @@ def get_admin_teachers(
                     tp.id,
                     tp.user_id,
                     tp.employee_id,
+                    tp.date_of_birth,
+                    tp.gender,
                     tp.phone,
                     tp.designation,
                     tp.department,
                     tp.qualification,
+                    tp.specialization,
                     tp.experience_years,
                     tp.joining_date,
                     tp.profile_image_url,
@@ -145,6 +151,10 @@ def get_admin_teachers(
                     ),
                     "employee_id":
                         row["employee_id"],
+                    "date_of_birth":
+                        row["date_of_birth"],
+                    "gender":
+                        row["gender"],
                     "phone":
                         row["phone"],
                     "designation":
@@ -153,6 +163,8 @@ def get_admin_teachers(
                         row["department"],
                     "qualification":
                         row["qualification"],
+                    "specialization":
+                        row["specialization"],
                     "experience_years":
                         row["experience_years"],
                     "joining_date":
@@ -206,10 +218,13 @@ def get_admin_teacher(
                     tp.id AS teacher_id,
                     tp.user_id,
                     tp.employee_id,
+                    tp.date_of_birth,
+                    tp.gender,
                     tp.phone,
                     tp.designation,
                     tp.department,
                     tp.qualification,
+                    tp.specialization,
                     tp.experience_years,
                     tp.joining_date,
                     tp.profile_image_url,
@@ -258,6 +273,10 @@ def get_admin_teacher(
                 ),
                 "employee_id":
                     row["employee_id"],
+                "date_of_birth":
+                    row["date_of_birth"],
+                "gender":
+                    row["gender"],
                 "phone":
                     row["phone"],
                 "designation":
@@ -266,6 +285,8 @@ def get_admin_teacher(
                     row["department"],
                 "qualification":
                     row["qualification"],
+                "specialization":
+                    row["specialization"],
                 "experience_years":
                     row["experience_years"],
                 "joining_date":
@@ -461,10 +482,13 @@ def create_admin_teacher(
                 (
                     user_id,
                     employee_id,
+                    date_of_birth,
+                    gender,
                     phone,
                     designation,
                     department,
                     qualification,
+                    specialization,
                     experience_years,
                     joining_date,
                     profile_image_url
@@ -473,10 +497,13 @@ def create_admin_teacher(
                 (
                     :user_id,
                     :employee_id,
+                    :date_of_birth,
+                    :gender,
                     :phone,
                     :designation,
                     :department,
                     :qualification,
+                    :specialization,
                     :experience_years,
                     :joining_date,
                     :profile_image_url
@@ -489,6 +516,14 @@ def create_admin_teacher(
 
                 "employee_id":
                     employee_id,
+
+                "date_of_birth":
+                    payload.date_of_birth,
+
+                "gender":
+                    payload.gender.strip()
+                    if payload.gender
+                    else None,
 
                 "phone":
                     payload.phone.strip()
@@ -508,6 +543,11 @@ def create_admin_teacher(
                 "qualification":
                     payload.qualification.strip()
                     if payload.qualification
+                    else None,
+
+                "specialization":
+                    payload.specialization.strip()
+                    if payload.specialization
                     else None,
 
                 "experience_years":
@@ -543,6 +583,20 @@ def create_admin_teacher(
                 "role": "TEACHER",
                 "employee_id":
                     employee_id,
+                "date_of_birth":
+                    payload.date_of_birth,
+                "gender":
+                    (
+                        payload.gender.strip()
+                        if payload.gender
+                        else None
+                    ),
+                "specialization":
+                    (
+                        payload.specialization.strip()
+                        if payload.specialization
+                        else None
+                    ),
                 "is_active":
                     payload.is_active,
             },
@@ -723,6 +777,12 @@ def update_admin_teacher(
                     employee_id =
                         :employee_id,
 
+                    date_of_birth =
+                        :date_of_birth,
+
+                    gender =
+                        :gender,
+
                     phone =
                         :phone,
 
@@ -734,6 +794,9 @@ def update_admin_teacher(
 
                     qualification =
                         :qualification,
+
+                    specialization =
+                        :specialization,
 
                     experience_years =
                         :experience_years,
@@ -750,6 +813,14 @@ def update_admin_teacher(
             {
                 "employee_id":
                     employee_id,
+
+                "date_of_birth":
+                    payload.date_of_birth,
+
+                "gender":
+                    payload.gender.strip()
+                    if payload.gender
+                    else None,
 
                 "phone":
                     payload.phone.strip()
@@ -769,6 +840,11 @@ def update_admin_teacher(
                 "qualification":
                     payload.qualification.strip()
                     if payload.qualification
+                    else None,
+
+                "specialization":
+                    payload.specialization.strip()
+                    if payload.specialization
                     else None,
 
                 "experience_years":
@@ -990,6 +1066,7 @@ def get_admin_teacher_classes(
                     tc.teacher_user_id,
                     tc.class_id,
                     tc.subject,
+                    tc.is_class_teacher,
 
                     sc.name AS class_name,
                     sc.section,
@@ -1029,6 +1106,8 @@ def get_admin_teacher_classes(
                         row["class_id"],
                     "subject":
                         row["subject"],
+                    "is_class_teacher":
+                        bool(row["is_class_teacher"]),
                     "class": {
                         "id":
                             row["class_id"],
@@ -1141,8 +1220,16 @@ def create_admin_teacher_class(
                 ),
             )
 
+        subject = (
+            payload.subject.strip()
+            if payload.subject
+            else None
+        )
+
         # ----------------------------------------------------
         # DUPLICATE
+        # Teacher + class + subject must be unique.
+        # MySQL <=> safely compares NULL values too.
         # ----------------------------------------------------
 
         duplicate = db.execute(
@@ -1154,6 +1241,7 @@ def create_admin_teacher_class(
                     :teacher_user_id
                   AND class_id =
                     :class_id
+                  AND subject <=> :subject
                 LIMIT 1
                 """
             ),
@@ -1163,6 +1251,9 @@ def create_admin_teacher_class(
 
                 "class_id":
                     payload.class_id,
+
+                "subject":
+                    subject,
             },
         ).first()
 
@@ -1170,16 +1261,10 @@ def create_admin_teacher_class(
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    "Teacher is already "
-                    "assigned to this class"
+                    "Teacher is already assigned "
+                    "to this class and subject"
                 ),
             )
-
-        subject = (
-            payload.subject.strip()
-            if payload.subject
-            else None
-        )
 
         result = db.execute(
             text(
@@ -1188,13 +1273,15 @@ def create_admin_teacher_class(
                 (
                     teacher_user_id,
                     class_id,
-                    subject
+                    subject,
+                    is_class_teacher
                 )
                 VALUES
                 (
                     :teacher_user_id,
                     :class_id,
-                    :subject
+                    :subject,
+                    :is_class_teacher
                 )
                 """
             ),
@@ -1207,6 +1294,13 @@ def create_admin_teacher_class(
 
                 "subject":
                     subject,
+
+                "is_class_teacher":
+                    (
+                        1
+                        if payload.is_class_teacher
+                        else 0
+                    ),
             },
         )
 
@@ -1225,6 +1319,8 @@ def create_admin_teacher_class(
                     payload.class_id,
                 "subject":
                     subject,
+                "is_class_teacher":
+                    payload.is_class_teacher,
             },
         }
 
@@ -1270,7 +1366,9 @@ def update_admin_teacher_class(
         assignment = db.execute(
             text(
                 """
-                SELECT id
+                SELECT
+                    id,
+                    class_id
                 FROM teacher_classes
                 WHERE id = :assignment_id
                   AND teacher_user_id =
@@ -1285,7 +1383,7 @@ def update_admin_teacher_class(
                 "teacher_user_id":
                     teacher["user_id"],
             },
-        ).first()
+        ).mappings().first()
 
         if not assignment:
             raise HTTPException(
@@ -1302,17 +1400,70 @@ def update_admin_teacher_class(
             else None
         )
 
+        # ----------------------------------------------------
+        # DUPLICATE AFTER SUBJECT CHANGE
+        # ----------------------------------------------------
+
+        duplicate = db.execute(
+            text(
+                """
+                SELECT id
+                FROM teacher_classes
+                WHERE teacher_user_id =
+                    :teacher_user_id
+                  AND class_id =
+                    :class_id
+                  AND subject <=> :subject
+                  AND id != :assignment_id
+                LIMIT 1
+                """
+            ),
+            {
+                "teacher_user_id":
+                    teacher["user_id"],
+
+                "class_id":
+                    assignment["class_id"],
+
+                "subject":
+                    subject,
+
+                "assignment_id":
+                    assignment_id,
+            },
+        ).first()
+
+        if duplicate:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Teacher already has this "
+                    "subject assigned to the class"
+                ),
+            )
+
         db.execute(
             text(
                 """
                 UPDATE teacher_classes
-                SET subject = :subject
+                SET
+                    subject = :subject,
+                    is_class_teacher =
+                        :is_class_teacher
                 WHERE id = :assignment_id
                 """
             ),
             {
                 "subject":
                     subject,
+
+                "is_class_teacher":
+                    (
+                        1
+                        if payload.is_class_teacher
+                        else 0
+                    ),
+
                 "assignment_id":
                     assignment_id,
             },
@@ -1324,6 +1475,16 @@ def update_admin_teacher_class(
             "success": True,
             "message":
                 "Class assignment updated successfully",
+            "data": {
+                "id":
+                    assignment_id,
+                "class_id":
+                    assignment["class_id"],
+                "subject":
+                    subject,
+                "is_class_teacher":
+                    payload.is_class_teacher,
+            },
         }
 
     except HTTPException:

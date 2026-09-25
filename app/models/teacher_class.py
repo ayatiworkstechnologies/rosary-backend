@@ -1,4 +1,5 @@
 from sqlalchemy import (
+    Boolean,
     Column,
     ForeignKey,
     Integer,
@@ -43,10 +44,17 @@ class TeacherClass(Base):
         nullable=True,
     )
 
+    is_class_teacher = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+
     __table_args__ = (
         UniqueConstraint(
             "teacher_user_id",
             "class_id",
-            name="uq_teacher_class",
+            "subject",
+            name="uq_teacher_class_subject",
         ),
     )

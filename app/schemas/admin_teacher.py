@@ -33,6 +33,13 @@ class AdminTeacherCreate(BaseModel):
         max_length=50,
     )
 
+    date_of_birth: date | None = None
+
+    gender: str | None = Field(
+        default=None,
+        max_length=20,
+    )
+
     phone: str | None = Field(
         default=None,
         max_length=30,
@@ -51,6 +58,11 @@ class AdminTeacherCreate(BaseModel):
     qualification: str | None = Field(
         default=None,
         max_length=200,
+    )
+
+    specialization: str | None = Field(
+        default=None,
+        max_length=150,
     )
 
     experience_years: int | None = None
@@ -89,6 +101,13 @@ class AdminTeacherUpdate(BaseModel):
         max_length=50,
     )
 
+    date_of_birth: date | None = None
+
+    gender: str | None = Field(
+        default=None,
+        max_length=20,
+    )
+
     phone: str | None = Field(
         default=None,
         max_length=30,
@@ -107,6 +126,11 @@ class AdminTeacherUpdate(BaseModel):
     qualification: str | None = Field(
         default=None,
         max_length=200,
+    )
+
+    specialization: str | None = Field(
+        default=None,
+        max_length=150,
     )
 
     experience_years: int | None = None
@@ -139,9 +163,13 @@ class AdminTeacherClassCreate(BaseModel):
         max_length=100,
     )
 
+    is_class_teacher: bool = False
+
 
 class AdminTeacherClassUpdate(BaseModel):
     subject: str | None = Field(
         default=None,
         max_length=100,
     )
+
+    is_class_teacher: bool = False

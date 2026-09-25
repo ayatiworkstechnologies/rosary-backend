@@ -144,6 +144,7 @@ def get_students(
                     s.admission_no,
                     s.roll_no,
                     s.full_name,
+                    s.date_of_birth,
                     s.gender,
                     s.class_id,
                     s.is_active,
@@ -181,6 +182,9 @@ def get_students(
                     "roll_no": row["roll_no"],
                     "full_name": (
                         row["full_name"]
+                    ),
+                    "date_of_birth": (
+                        row["date_of_birth"]
                     ),
                     "gender": row["gender"],
                     "class_id": row["class_id"],
@@ -247,6 +251,7 @@ def get_student(
                     s.admission_no,
                     s.roll_no,
                     s.full_name,
+                    s.date_of_birth,
                     s.gender,
                     s.class_id,
                     s.is_active,
@@ -284,6 +289,9 @@ def get_student(
                 ),
                 "roll_no": row["roll_no"],
                 "full_name": row["full_name"],
+                "date_of_birth": (
+                    row["date_of_birth"]
+                ),
                 "gender": row["gender"],
                 "class_id": row["class_id"],
                 "is_active": bool(
@@ -407,6 +415,7 @@ def create_student(
                     admission_no,
                     roll_no,
                     full_name,
+                    date_of_birth,
                     gender,
                     class_id,
                     is_active
@@ -416,6 +425,7 @@ def create_student(
                     :admission_no,
                     :roll_no,
                     :full_name,
+                    :date_of_birth,
                     :gender,
                     :class_id,
                     :is_active
@@ -431,6 +441,9 @@ def create_student(
 
                 "full_name":
                     full_name,
+
+                "date_of_birth":
+                    payload.date_of_birth,
 
                 "gender":
                     gender,
@@ -463,6 +476,8 @@ def create_student(
                     roll_no,
                 "full_name":
                     full_name,
+                "date_of_birth":
+                    payload.date_of_birth,
                 "gender":
                     gender,
                 "class_id":
@@ -590,7 +605,7 @@ def update_student(
         )
 
         # ---------------------------------
-        # Update
+        # Update student
         # ---------------------------------
 
         db.execute(
@@ -607,6 +622,9 @@ def update_student(
 
                     full_name =
                         :full_name,
+
+                    date_of_birth =
+                        :date_of_birth,
 
                     gender =
                         :gender,
@@ -630,6 +648,9 @@ def update_student(
 
                 "full_name":
                     full_name,
+
+                "date_of_birth":
+                    payload.date_of_birth,
 
                 "gender":
                     gender,
@@ -657,6 +678,24 @@ def update_student(
                 "Student updated "
                 "successfully"
             ),
+            "data": {
+                "id":
+                    student_id,
+                "admission_no":
+                    admission_no,
+                "roll_no":
+                    roll_no,
+                "full_name":
+                    full_name,
+                "date_of_birth":
+                    payload.date_of_birth,
+                "gender":
+                    gender,
+                "class_id":
+                    payload.class_id,
+                "is_active":
+                    payload.is_active,
+            },
         }
 
     except HTTPException:

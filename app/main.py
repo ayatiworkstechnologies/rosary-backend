@@ -52,7 +52,9 @@ from app.api.v1.admin.exam_schedules import (
 from app.api.v1.admin.users import (
     router as admin_users_router,
 )
-
+from app.api.v1.admin.parents import (
+    router as admin_parents_router,
+)
 # =========================================================
 # LOGGING
 # =========================================================
@@ -232,4 +234,8 @@ app.include_router(
 )
 app.include_router(
     admin_users_router
+)
+app.include_router(
+    admin_parents_router,
+    prefix="/api/v1",
 )

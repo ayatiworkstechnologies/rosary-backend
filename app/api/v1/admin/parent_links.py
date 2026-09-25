@@ -26,7 +26,7 @@ router = APIRouter(
 # GET PARENTS FOR DROPDOWN
 # =========================================================
 
-@router.get("/parents")
+@router.get("/parent-options")
 def get_admin_parents(
     db: Session = Depends(get_db),
 ):

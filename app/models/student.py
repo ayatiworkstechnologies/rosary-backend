@@ -1,6 +1,7 @@
 from sqlalchemy import (
     Boolean,
     Column,
+    Date,
     ForeignKey,
     Integer,
     String,
@@ -33,6 +34,11 @@ class Student(Base):
     full_name = Column(
         String(150),
         nullable=False,
+    )
+
+    date_of_birth = Column(
+        Date,
+        nullable=True,
     )
 
     gender = Column(

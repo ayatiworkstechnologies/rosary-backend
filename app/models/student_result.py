@@ -74,7 +74,14 @@ class StudentResult(Base):
 
     obtained_marks = Column(
         Numeric(6, 2),
+        nullable=True,
+    )
+
+    result_status = Column(
+        String(20),
         nullable=False,
+        default="PRESENT",
+        server_default="PRESENT",
     )
 
     grade = Column(

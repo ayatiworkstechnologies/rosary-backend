@@ -39,6 +39,16 @@ class TeacherProfile(Base):
         index=True,
     )
 
+    date_of_birth = Column(
+        Date,
+        nullable=True,
+    )
+
+    gender = Column(
+        String(20),
+        nullable=True,
+    )
+
     phone = Column(
         String(30),
         nullable=True,
@@ -56,6 +66,11 @@ class TeacherProfile(Base):
 
     qualification = Column(
         String(200),
+        nullable=True,
+    )
+
+    specialization = Column(
+        String(150),
         nullable=True,
     )
 
