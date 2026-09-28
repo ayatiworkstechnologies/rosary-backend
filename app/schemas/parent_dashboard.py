@@ -13,10 +13,13 @@ class DashboardAttendanceResponse(BaseModel):
 class DashboardResultResponse(BaseModel):
     exam_id: int
     exam_name: str
+
     total_marks: float
     obtained_marks: float
+
     percentage: float
-    grade: str
+
+    grade: str | None = None
 
 
 class DashboardUpcomingExamResponse(BaseModel):

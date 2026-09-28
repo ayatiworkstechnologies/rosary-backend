@@ -37,9 +37,12 @@ router = APIRouter(
 # =========================================================
 
 def calculate_grade(
-    obtained_marks: float,
+    obtained_marks: float | None,
     max_marks: float,
 ):
+    if obtained_marks is None:
+        return None
+
     if max_marks <= 0:
         return None
 
@@ -83,13 +86,20 @@ def build_result_response(
         result.max_marks
     )
 
-    obtained_marks = float(
-        result.obtained_marks
+    obtained_marks = (
+        float(result.obtained_marks)
+        if result.obtained_marks
+        is not None
+        else None
     )
 
     percentage = 0.0
 
-    if max_marks > 0:
+    if (
+        result.result_status == "PRESENT"
+        and obtained_marks is not None
+        and max_marks > 0
+    ):
         percentage = round(
             (
                 obtained_marks
@@ -141,6 +151,9 @@ def build_result_response(
 
         "obtained_marks":
             obtained_marks,
+
+        "result_status":
+            result.result_status,
 
         "percentage":
             percentage,
@@ -455,28 +468,50 @@ def create_admin_result(
             ),
         )
 
-    if payload.obtained_marks < 0:
-        raise HTTPException(
-            status_code=
-                status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "Obtained marks cannot "
-                "be negative"
-            ),
-        )
+    if payload.result_status == "PRESENT":
+        if payload.obtained_marks is None:
+            raise HTTPException(
+                status_code=
+                    status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Obtained marks are required "
+                    "when result status is PRESENT"
+                ),
+            )
 
-    if (
-        payload.obtained_marks
-        > payload.max_marks
-    ):
-        raise HTTPException(
-            status_code=
-                status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "Obtained marks cannot "
-                "exceed maximum marks"
-            ),
-        )
+        if payload.obtained_marks < 0:
+            raise HTTPException(
+                status_code=
+                    status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Obtained marks cannot "
+                    "be negative"
+                ),
+            )
+
+        if (
+            payload.obtained_marks
+            > payload.max_marks
+        ):
+            raise HTTPException(
+                status_code=
+                    status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Obtained marks cannot "
+                    "exceed maximum marks"
+                ),
+            )
+
+    elif payload.result_status == "ABSENT":
+        if payload.obtained_marks is not None:
+            raise HTTPException(
+                status_code=
+                    status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Obtained marks must be null "
+                    "when result status is ABSENT"
+                ),
+            )
 
     subject = (
         payload.subject.strip()
@@ -516,9 +551,13 @@ def create_admin_result(
     # CALCULATE GRADE
     # -----------------------------------------------------
 
-    grade = calculate_grade(
-        payload.obtained_marks,
-        payload.max_marks,
+    grade = (
+        calculate_grade(
+            payload.obtained_marks,
+            payload.max_marks,
+        )
+        if payload.result_status == "PRESENT"
+        else None
     )
 
     # -----------------------------------------------------
@@ -547,6 +586,9 @@ def create_admin_result(
 
         obtained_marks=
             payload.obtained_marks,
+
+        result_status=
+            payload.result_status,
 
         grade=
             grade,
@@ -696,14 +738,29 @@ def update_admin_result(
         )
     )
 
-    final_obtained_marks = (
-        payload.obtained_marks
-        if payload.obtained_marks
+    final_result_status = (
+        payload.result_status
+        if payload.result_status
         is not None
-        else float(
-            result.obtained_marks
-        )
+        else result.result_status
     )
+
+    if final_result_status == "ABSENT":
+        final_obtained_marks = None
+    elif (
+        "obtained_marks"
+        in payload.model_fields_set
+    ):
+        final_obtained_marks = (
+            payload.obtained_marks
+        )
+    else:
+        final_obtained_marks = (
+            float(result.obtained_marks)
+            if result.obtained_marks
+            is not None
+            else None
+        )
 
     # -----------------------------------------------------
     # VALIDATE MARKS
@@ -719,28 +776,42 @@ def update_admin_result(
             ),
         )
 
-    if final_obtained_marks < 0:
-        raise HTTPException(
-            status_code=
-                status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "Obtained marks cannot "
-                "be negative"
-            ),
-        )
+    if final_result_status == "PRESENT":
+        if final_obtained_marks is None:
+            raise HTTPException(
+                status_code=
+                    status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Obtained marks are required "
+                    "when result status is PRESENT"
+                ),
+            )
 
-    if (
-        final_obtained_marks
-        > final_max_marks
-    ):
-        raise HTTPException(
-            status_code=
-                status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "Obtained marks cannot "
-                "exceed maximum marks"
-            ),
-        )
+        if final_obtained_marks < 0:
+            raise HTTPException(
+                status_code=
+                    status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Obtained marks cannot "
+                    "be negative"
+                ),
+            )
+
+        if (
+            final_obtained_marks
+            > final_max_marks
+        ):
+            raise HTTPException(
+                status_code=
+                    status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Obtained marks cannot "
+                    "exceed maximum marks"
+                ),
+            )
+
+    elif final_result_status == "ABSENT":
+        final_obtained_marks = None
 
     # -----------------------------------------------------
     # DUPLICATE CHECK
@@ -779,9 +850,13 @@ def update_admin_result(
     # CALCULATE GRADE
     # -----------------------------------------------------
 
-    grade = calculate_grade(
-        final_obtained_marks,
-        final_max_marks,
+    grade = (
+        calculate_grade(
+            final_obtained_marks,
+            final_max_marks,
+        )
+        if final_result_status == "PRESENT"
+        else None
     )
 
     # -----------------------------------------------------
@@ -810,6 +885,10 @@ def update_admin_result(
 
     result.obtained_marks = (
         final_obtained_marks
+    )
+
+    result.result_status = (
+        final_result_status
     )
 
     result.grade = grade

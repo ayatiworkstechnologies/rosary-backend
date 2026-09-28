@@ -351,29 +351,56 @@ def get_child_results(
             result.max_marks or 0
         )
 
-        obtained_marks = float(
-            result.obtained_marks or 0
-        )
+        result_status = (
+            result.result_status
+            or "PRESENT"
+        ).strip().upper()
 
-        subject_percentage = 0.0
+        # -------------------------------------------------
+        # ABSENT
+        # -------------------------------------------------
 
-        if max_marks > 0:
-            subject_percentage = round(
-                (
-                    obtained_marks
-                    / max_marks
-                )
-                * 100,
-                2,
+        if result_status == "ABSENT":
+
+            obtained_marks = None
+            subject_percentage = 0.0
+            subject_grade = None
+
+        # -------------------------------------------------
+        # PRESENT
+        # -------------------------------------------------
+
+        else:
+
+            obtained_marks = float(
+                result.obtained_marks or 0
             )
 
-        total_max_marks += (
-            max_marks
-        )
+            subject_percentage = 0.0
 
-        total_obtained_marks += (
-            obtained_marks
-        )
+            if max_marks > 0:
+                subject_percentage = round(
+                    (
+                        obtained_marks
+                        / max_marks
+                    )
+                    * 100,
+                    2,
+                )
+
+            subject_grade = (
+                result.grade
+            )
+
+            # Only PRESENT subjects are included
+            # in the overall marks calculation.
+            total_max_marks += (
+                max_marks
+            )
+
+            total_obtained_marks += (
+                obtained_marks
+            )
 
         result_items.append(
             {
@@ -389,11 +416,14 @@ def get_child_results(
                 "obtained_marks":
                     obtained_marks,
 
+                "result_status":
+                    result_status,
+
                 "percentage":
                     subject_percentage,
 
                 "grade":
-                    result.grade,
+                    subject_grade,
 
                 "remarks":
                     result.remarks,
@@ -405,6 +435,7 @@ def get_child_results(
     # -----------------------------------------------------
 
     overall_percentage = 0.0
+    overall_grade = None
 
     if total_max_marks > 0:
 
@@ -417,11 +448,11 @@ def get_child_results(
             2,
         )
 
-    overall_grade = (
-        calculate_result_grade(
-            overall_percentage
+        overall_grade = (
+            calculate_result_grade(
+                overall_percentage
+            )
         )
-    )
 
     # -----------------------------------------------------
     # RESPONSE
@@ -2939,6 +2970,16 @@ def get_parent_dashboard(
 
         for result in result_rows:
 
+            result_status = (
+                result.result_status
+                or "PRESENT"
+            ).strip().upper()
+
+            # ABSENT subjects are not treated
+            # as zero marks in dashboard totals.
+            if result_status == "ABSENT":
+                continue
+
             total_marks += float(
                 result.max_marks or 0
             )
@@ -2949,6 +2990,7 @@ def get_parent_dashboard(
 
 
         result_percentage = 0.0
+        result_grade = None
 
 
         if total_marks > 0:
@@ -2960,6 +3002,12 @@ def get_parent_dashboard(
                 )
                 * 100,
                 2,
+            )
+
+            result_grade = (
+                calculate_result_grade(
+                    result_percentage
+                )
             )
 
 
@@ -2986,9 +3034,7 @@ def get_parent_dashboard(
                 result_percentage,
 
             "grade":
-                calculate_result_grade(
-                    result_percentage
-                ),
+                result_grade,
         }
 
 
