@@ -260,6 +260,15 @@ def get_class_results(
                     float(
                         result.obtained_marks
                     )
+                    if (
+                        result
+                        and result.obtained_marks
+                        is not None
+                    )
+                    else None,
+
+                "result_status":
+                    result.result_status
                     if result
                     else None,
 
@@ -409,31 +418,67 @@ def save_class_results(
                 ),
             )
 
-        if item.obtained_marks < 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    "Obtained marks cannot "
-                    "be negative"
-                ),
+        result_status = (
+            item.result_status
+            or "PRESENT"
+        ).strip().upper()
+
+        # -------------------------------------------------
+        # ABSENT
+        # -------------------------------------------------
+
+        if result_status == "ABSENT":
+
+            obtained_marks = None
+            grade = None
+
+        # -------------------------------------------------
+        # PRESENT
+        # -------------------------------------------------
+
+        else:
+
+            if item.obtained_marks is None:
+                raise HTTPException(
+                    status_code=
+                        status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "Obtained marks are required "
+                        "when result status is PRESENT"
+                    ),
+                )
+
+            obtained_marks = (
+                item.obtained_marks
             )
 
-        if (
-            item.obtained_marks
-            > item.max_marks
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    "Obtained marks cannot "
-                    "exceed maximum marks"
-                ),
-            )
+            if obtained_marks < 0:
+                raise HTTPException(
+                    status_code=
+                        status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "Obtained marks cannot "
+                        "be negative"
+                    ),
+                )
 
-        grade = calculate_grade(
-            item.obtained_marks,
-            item.max_marks,
-        )
+            if (
+                obtained_marks
+                > item.max_marks
+            ):
+                raise HTTPException(
+                    status_code=
+                        status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "Obtained marks cannot "
+                        "exceed maximum marks"
+                    ),
+                )
+
+            grade = calculate_grade(
+                obtained_marks,
+                item.max_marks,
+            )
 
         existing = (
             db.query(StudentResult)
@@ -464,7 +509,11 @@ def save_class_results(
             )
 
             existing.obtained_marks = (
-                item.obtained_marks
+                obtained_marks
+            )
+
+            existing.result_status = (
+                result_status
             )
 
             existing.grade = (
@@ -496,7 +545,10 @@ def save_class_results(
                     item.max_marks,
 
                 obtained_marks=
-                    item.obtained_marks,
+                    obtained_marks,
+
+                result_status=
+                    result_status,
 
                 grade=
                     grade,

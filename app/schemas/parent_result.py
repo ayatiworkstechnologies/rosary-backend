@@ -22,7 +22,9 @@ class ParentResultItemResponse(BaseModel):
 
     max_marks: float
 
-    obtained_marks: float
+    obtained_marks: float | None = None
+
+    result_status: str
 
     percentage: float
 
@@ -56,7 +58,7 @@ class ParentResultsResponse(BaseModel):
 
     overall_percentage: float
 
-    overall_grade: str
+    overall_grade: str | None = None
 
     results: list[
         ParentResultItemResponse
