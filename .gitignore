@@ -11,3 +11,6 @@ __pycache__/
 
 .DS_Store
 rosary_portal.sql
+backups/
+scripts/real_data/reports/
+scripts/real_data/input/
