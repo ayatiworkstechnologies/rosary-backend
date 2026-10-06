@@ -61,6 +61,8 @@ from app.models.parent_student import ParentStudent
 from app.models.student_fee import StudentFee
 from app.models.download_form import DownloadForm
 from app.models.parent_profile import ParentProfile
+
+from app.models.notification import Notification
 # =========================================================
 # OPTIONAL EXPORT LIST
 # =========================================================
