@@ -1446,10 +1446,42 @@ def create_homework(
         is_active=True,
     )
 
+    # Save homework and generate its ID
     db.add(homework)
+    db.flush()
 
+    # Find unique parents of active students in this class
+    parent_user_ids = (
+        db.query(ParentStudent.parent_user_id)
+        .join(
+            Student,
+            Student.id == ParentStudent.student_id,
+        )
+        .filter(
+            Student.class_id == class_id,
+            Student.is_active.is_(True),
+        )
+        .distinct()
+        .all()
+    )
+
+    # Create one notification per parent
+    for (parent_user_id,) in parent_user_ids:
+        create_notification(
+            db=db,
+            user_id=parent_user_id,
+            title="New Homework",
+            message=(
+                f"{homework.subject} homework has been added "
+                f"for {school_class.name}-{school_class.section}."
+            ),
+            notification_type="HOMEWORK",
+            reference_id=homework.id,
+            link="/parent/homework",
+        )
+
+    # Save homework and notifications together
     db.commit()
-
     db.refresh(homework)
 
     class_name = (
