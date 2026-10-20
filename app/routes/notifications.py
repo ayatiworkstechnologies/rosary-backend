@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-
+from fastapi import Query
 from app.database import get_db
 from app.dependencies import get_current_parent
 from app.models.notification import Notification
 from app.models.user import User
-from app.schemas.notification import NotificationResponse
+from app.schemas.notification import NotificationResponse, NotificationListResponse
 
 
 router = APIRouter(
@@ -20,27 +20,77 @@ router = APIRouter(
 
 @router.get(
     "",
-    response_model=list[NotificationResponse],
+      response_model=NotificationListResponse,
 )
 def get_notifications(
+    page: int = Query(
+        default=1,
+        ge=1,
+    ),
+
+    page_size: int = Query(
+        default=20,
+        ge=1,
+        le=100,
+    ),
+
     db: Session = Depends(get_db),
+
     current_user: User = Depends(
         get_current_parent
     ),
 ):
-    notifications = (
+    query = (
         db.query(Notification)
         .filter(
             Notification.user_id
             == current_user.id
         )
+    )
+
+    total = query.count()
+
+    total_pages = (
+        (total + page_size - 1)
+        // page_size
+    )
+
+    offset = (
+        page - 1
+    ) * page_size
+
+    notifications = (
+        query
         .order_by(
             Notification.created_at.desc()
         )
+        .offset(offset)
+        .limit(page_size)
         .all()
     )
 
-    return notifications
+    return {
+        "data":
+            notifications,
+
+        "page":
+            page,
+
+        "page_size":
+            page_size,
+
+        "total":
+            total,
+
+        "total_pages":
+            total_pages,
+
+        "has_next":
+            page < total_pages,
+
+        "has_previous":
+            page > 1,
+    }
 
 
 # =========================================================

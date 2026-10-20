@@ -141,3 +141,13 @@ class AdminUserResponse(BaseModel):
     model_config = ConfigDict(
         from_attributes=True
     )
+
+class AdminUserListResponse(BaseModel):
+    data: list[AdminUserResponse]
+
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+    has_next: bool
+    has_previous: bool

@@ -146,25 +146,200 @@ def get_fee_or_404(
 @router.get("")
 def get_admin_fees(
     search: str | None = None,
-
     student_id: int | None = None,
-
     class_id: int | None = None,
-
     academic_year: str | None = None,
-
     fee_type: str | None = None,
-
     payment_status: str | None = None,
 
     is_active: bool | None = Query(
         default=None
     ),
 
+    page: int = Query(
+        default=1,
+        ge=1,
+    ),
+
+    page_size: int = Query(
+        default=50,
+        ge=1,
+        le=100,
+    ),
+
     db: Session = Depends(get_db),
 ):
     try:
-        sql = """
+        where_sql = """
+            FROM student_fees AS sf
+
+            INNER JOIN students AS s
+                ON s.id = sf.student_id
+
+            LEFT JOIN school_classes AS sc
+                ON sc.id = s.class_id
+
+            WHERE 1 = 1
+        """
+
+        params = {}
+
+        # --------------------------------------------
+        # SEARCH
+        # --------------------------------------------
+
+        if search:
+            where_sql += """
+                AND (
+                    sf.fee_title LIKE :search
+                    OR sf.fee_type LIKE :search
+                    OR sf.academic_year LIKE :search
+                    OR sf.receipt_no LIKE :search
+                    OR s.full_name LIKE :search
+                    OR s.admission_no LIKE :search
+                )
+            """
+
+            params["search"] = (
+                f"%{search.strip()}%"
+            )
+
+        # --------------------------------------------
+        # STUDENT
+        # --------------------------------------------
+
+        if student_id is not None:
+            where_sql += """
+                AND sf.student_id =
+                    :student_id
+            """
+
+            params["student_id"] = student_id
+
+        # --------------------------------------------
+        # CLASS
+        # --------------------------------------------
+
+        if class_id is not None:
+            where_sql += """
+                AND s.class_id =
+                    :class_id
+            """
+
+            params["class_id"] = class_id
+
+        # --------------------------------------------
+        # ACADEMIC YEAR
+        # --------------------------------------------
+
+        if academic_year:
+            where_sql += """
+                AND sf.academic_year =
+                    :academic_year
+            """
+
+            params["academic_year"] = (
+                academic_year.strip()
+            )
+
+        # --------------------------------------------
+        # FEE TYPE
+        # --------------------------------------------
+
+        if fee_type:
+            where_sql += """
+                AND sf.fee_type =
+                    :fee_type
+            """
+
+            params["fee_type"] = (
+                fee_type.strip()
+            )
+
+        # --------------------------------------------
+        # PAYMENT STATUS
+        # --------------------------------------------
+
+        if payment_status:
+            normalized_status = (
+                payment_status
+                .strip()
+                .upper()
+            )
+
+            if normalized_status == "PAID":
+                where_sql += """
+                    AND sf.paid_amount
+                        >= sf.amount
+                """
+
+            elif normalized_status == "PARTIAL":
+                where_sql += """
+                    AND sf.paid_amount > 0
+                    AND sf.paid_amount
+                        < sf.amount
+                """
+
+            elif normalized_status == "UNPAID":
+                where_sql += """
+                    AND sf.paid_amount = 0
+                """
+
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "payment_status must "
+                        "be PAID, PARTIAL or "
+                        "UNPAID"
+                    ),
+                )
+
+        # --------------------------------------------
+        # ACTIVE
+        # --------------------------------------------
+
+        if is_active is not None:
+            where_sql += """
+                AND sf.is_active =
+                    :is_active
+            """
+
+            params["is_active"] = is_active
+
+        # --------------------------------------------
+        # TOTAL COUNT
+        # --------------------------------------------
+
+        total = db.execute(
+            text(
+                f"""
+                SELECT COUNT(*)
+                {where_sql}
+                """
+            ),
+            params,
+        ).scalar() or 0
+
+        # --------------------------------------------
+        # PAGINATION
+        # --------------------------------------------
+
+        offset = (
+            page - 1
+        ) * page_size
+
+        query_params = {
+            **params,
+            "limit": page_size,
+            "offset": offset,
+        }
+
+        # --------------------------------------------
+        # FEE LIST
+        # --------------------------------------------
+
+        sql = f"""
             SELECT
                 sf.id,
                 sf.student_id,
@@ -192,168 +367,19 @@ def get_admin_fees(
                 sc.academic_year
                     AS class_academic_year
 
-            FROM student_fees AS sf
+            {where_sql}
 
-            INNER JOIN students AS s
-                ON s.id = sf.student_id
-
-            LEFT JOIN school_classes AS sc
-                ON sc.id = s.class_id
-
-            WHERE 1 = 1
-        """
-
-        params = {}
-
-        # --------------------------------------------
-        # SEARCH
-        # --------------------------------------------
-
-        if search:
-            sql += """
-                AND (
-                    sf.fee_title LIKE :search
-
-                    OR sf.fee_type LIKE :search
-
-                    OR sf.academic_year LIKE :search
-
-                    OR sf.receipt_no LIKE :search
-
-                    OR s.full_name LIKE :search
-
-                    OR s.admission_no LIKE :search
-                )
-            """
-
-            params["search"] = (
-                f"%{search.strip()}%"
-            )
-
-        # --------------------------------------------
-        # STUDENT
-        # --------------------------------------------
-
-        if student_id is not None:
-            sql += """
-                AND sf.student_id =
-                    :student_id
-            """
-
-            params["student_id"] = (
-                student_id
-            )
-
-        # --------------------------------------------
-        # CLASS
-        # --------------------------------------------
-
-        if class_id is not None:
-            sql += """
-                AND s.class_id =
-                    :class_id
-            """
-
-            params["class_id"] = (
-                class_id
-            )
-
-        # --------------------------------------------
-        # ACADEMIC YEAR
-        # --------------------------------------------
-
-        if academic_year:
-            sql += """
-                AND sf.academic_year =
-                    :academic_year
-            """
-
-            params["academic_year"] = (
-                academic_year.strip()
-            )
-
-        # --------------------------------------------
-        # FEE TYPE
-        # --------------------------------------------
-
-        if fee_type:
-            sql += """
-                AND sf.fee_type =
-                    :fee_type
-            """
-
-            params["fee_type"] = (
-                fee_type.strip()
-            )
-
-        # --------------------------------------------
-        # PAYMENT STATUS
-        # --------------------------------------------
-
-        if payment_status:
-            normalized_status = (
-                payment_status
-                .strip()
-                .upper()
-            )
-
-            if normalized_status == "PAID":
-                sql += """
-                    AND sf.paid_amount
-                        >= sf.amount
-                """
-
-            elif (
-                normalized_status
-                == "PARTIAL"
-            ):
-                sql += """
-                    AND sf.paid_amount > 0
-                    AND sf.paid_amount
-                        < sf.amount
-                """
-
-            elif (
-                normalized_status
-                == "UNPAID"
-            ):
-                sql += """
-                    AND sf.paid_amount = 0
-                """
-
-            else:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        "payment_status must "
-                        "be PAID, PARTIAL or "
-                        "UNPAID"
-                    ),
-                )
-
-        # --------------------------------------------
-        # ACTIVE
-        # --------------------------------------------
-
-        if is_active is not None:
-            sql += """
-                AND sf.is_active =
-                    :is_active
-            """
-
-            params["is_active"] = (
-                is_active
-            )
-
-        sql += """
             ORDER BY
                 sf.due_date DESC,
                 sf.id DESC
+
+            LIMIT :limit
+            OFFSET :offset
         """
 
         rows = db.execute(
             text(sql),
-            params,
+            query_params,
         ).mappings().all()
 
         fees = []
@@ -373,22 +399,17 @@ def get_admin_fees(
 
             fees.append(
                 {
-                    "id":
-                        row["id"],
+                    "id": row["id"],
 
                     "student_id":
                         row["student_id"],
 
                     "student": {
                         "id":
-                            row[
-                                "student_id"
-                            ],
+                            row["student_id"],
 
                         "admission_no":
-                            row[
-                                "admission_no"
-                            ],
+                            row["admission_no"],
 
                         "roll_no":
                             row["roll_no"],
@@ -402,14 +423,10 @@ def get_admin_fees(
                         "class": (
                             {
                                 "id":
-                                    row[
-                                        "class_id"
-                                    ],
+                                    row["class_id"],
 
                                 "name":
-                                    row[
-                                        "class_name"
-                                    ],
+                                    row["class_name"],
 
                                 "section":
                                     row[
@@ -427,9 +444,7 @@ def get_admin_fees(
                     },
 
                     "academic_year":
-                        row[
-                            "academic_year"
-                        ],
+                        row["academic_year"],
 
                     "fee_title":
                         row["fee_title"],
@@ -462,9 +477,7 @@ def get_admin_fees(
                         row["receipt_no"],
 
                     "payment_mode":
-                        row[
-                            "payment_mode"
-                        ],
+                        row["payment_mode"],
 
                     "remarks":
                         row["remarks"],
@@ -482,10 +495,25 @@ def get_admin_fees(
                 }
             )
 
+        total_pages = (
+            (total + page_size - 1)
+            // page_size
+        )
+
         return {
             "success": True,
-            "total": len(fees),
             "data": fees,
+
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": total_pages,
+                "has_next":
+                    page < total_pages,
+                "has_previous":
+                    page > 1,
+            },
         }
 
     except HTTPException:
@@ -501,7 +529,6 @@ def get_admin_fees(
             status_code=500,
             detail="Failed to load fees",
         )
-
 
 # ============================================================
 # GET SINGLE FEE

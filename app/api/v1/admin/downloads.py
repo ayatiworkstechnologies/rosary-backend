@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.download_form import DownloadForm
 from app.models.school_class import SchoolClass
-from app.schemas.admin_download import AdminDownloadResponse
+from app.schemas.admin_download import AdminDownloadResponse, AdminDownloadListResponse
 
 
 router = APIRouter(
@@ -133,7 +133,7 @@ def delete_uploaded_file(file_url: str | None) -> None:
 
 @router.get(
     "",
-    response_model=list[AdminDownloadResponse],
+    response_model=AdminDownloadListResponse,
 )
 def get_downloads(
     search: str | None = Query(default=None),
@@ -141,18 +141,33 @@ def get_downloads(
     audience: str | None = Query(default=None),
     class_id: int | None = Query(default=None),
     is_active: bool | None = Query(default=None),
+
+    page: int = Query(
+        default=1,
+        ge=1,
+    ),
+
+    page_size: int = Query(
+        default=20,
+        ge=1,
+        le=100,
+    ),
+
     db: Session = Depends(get_db),
 ):
     query = db.query(DownloadForm)
 
     if search:
         query = query.filter(
-            DownloadForm.title.ilike(f"%{search}%")
+            DownloadForm.title.ilike(
+                f"%{search.strip()}%"
+            )
         )
 
     if category:
         query = query.filter(
-            DownloadForm.category == category
+            DownloadForm.category
+            == category.strip()
         )
 
     if audience:
@@ -163,22 +178,59 @@ def get_downloads(
 
     if class_id is not None:
         query = query.filter(
-            DownloadForm.class_id == class_id
+            DownloadForm.class_id
+            == class_id
         )
 
     if is_active is not None:
         query = query.filter(
-            DownloadForm.is_active == is_active
+            DownloadForm.is_active
+            == is_active
         )
 
-    return (
+    total = query.count()
+
+    total_pages = (
+        (total + page_size - 1)
+        // page_size
+    )
+
+    offset = (
+        page - 1
+    ) * page_size
+
+    rows = (
         query
         .order_by(
             DownloadForm.published_date.desc(),
             DownloadForm.id.desc(),
         )
+        .offset(offset)
+        .limit(page_size)
         .all()
     )
+
+    return {
+        "data": rows,
+
+        "page":
+            page,
+
+        "page_size":
+            page_size,
+
+        "total":
+            total,
+
+        "total_pages":
+            total_pages,
+
+        "has_next":
+            page < total_pages,
+
+        "has_previous":
+            page > 1,
+    }
 
 
 # ---------------------------------------------------------

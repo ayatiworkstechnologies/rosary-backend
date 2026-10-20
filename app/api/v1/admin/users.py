@@ -18,6 +18,7 @@ from app.schemas.admin_user import (
     AdminUserCreate,
     AdminUserPasswordReset,
     AdminUserResponse,
+    AdminUserListResponse,
     AdminUserStatusUpdate,
     AdminUserUpdate,
 )
@@ -216,8 +217,7 @@ def has_parent_links(
 
 @router.get(
     "",
-    response_model=
-        list[AdminUserResponse],
+    response_model=AdminUserListResponse,
 )
 def get_admin_users(
     search: str | None = Query(
@@ -230,6 +230,17 @@ def get_admin_users(
 
     is_active: bool | None = Query(
         default=None
+    ),
+
+    page: int = Query(
+        default=1,
+        ge=1,
+    ),
+
+    page_size: int = Query(
+        default=25,
+        ge=1,
+        le=100,
     ),
 
     db: Session = Depends(get_db),
@@ -279,15 +290,57 @@ def get_admin_users(
             == is_active
         )
 
+    # -----------------------------------------------------
+    # TOTAL
+    # -----------------------------------------------------
+
+    total = query.count()
+
+    total_pages = (
+        (total + page_size - 1)
+        // page_size
+    )
+
+    offset = (
+        page - 1
+    ) * page_size
+
+    # -----------------------------------------------------
+    # DATA
+    # -----------------------------------------------------
+
     users = (
         query
         .order_by(
             User.id.desc()
         )
+        .offset(offset)
+        .limit(page_size)
         .all()
     )
 
-    return users
+    return {
+        "data":
+            users,
+
+        "page":
+            page,
+
+        "page_size":
+            page_size,
+
+        "total":
+            total,
+
+        "total_pages":
+            total_pages,
+
+        "has_next":
+            page < total_pages,
+
+        "has_previous":
+            page > 1,
+    }
 
 
 # =========================================================

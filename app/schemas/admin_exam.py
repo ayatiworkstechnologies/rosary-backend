@@ -1,6 +1,11 @@
 from datetime import date, datetime
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    model_validator,
+)
 
 
 class AdminExamCreate(BaseModel):
@@ -67,9 +72,27 @@ class AdminExamUpdate(BaseModel):
         return self
 
 
+# =========================================================
+# ACTIVE / INACTIVE
+# =========================================================
+
 class AdminExamStatusUpdate(BaseModel):
     is_active: bool
 
+
+# =========================================================
+# PUBLISH / UNPUBLISH RESULTS
+# =========================================================
+
+class AdminExamPublishResultsUpdate(
+    BaseModel
+):
+    results_published: bool
+
+
+# =========================================================
+# RESPONSE
+# =========================================================
 
 class AdminExamResponse(BaseModel):
     id: int
@@ -82,8 +105,26 @@ class AdminExamResponse(BaseModel):
 
     is_active: bool
 
+    results_published: bool
+
     created_at: datetime | None = None
 
     model_config = ConfigDict(
         from_attributes=True
     )
+
+
+# =========================================================
+# LIST RESPONSE
+# =========================================================
+
+class AdminExamListResponse(BaseModel):
+    data: list[AdminExamResponse]
+
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+
+    has_next: bool
+    has_previous: bool

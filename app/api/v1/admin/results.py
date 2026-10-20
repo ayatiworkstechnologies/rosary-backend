@@ -18,6 +18,7 @@ from app.models.student_result import StudentResult
 from app.schemas.admin_result import (
     AdminResultCreate,
     AdminResultResponse,
+    AdminResultListResponse,
     AdminResultUpdate,
 )
 from app.dependencies import get_current_admin
@@ -178,26 +179,38 @@ def build_result_response(
 # =========================================================
 # GET ALL RESULTS
 # =========================================================
-
 @router.get(
     "",
-    response_model=list[
-        AdminResultResponse
-    ],
+    response_model=AdminResultListResponse,
 )
 def get_admin_results(
     search: str | None = Query(
         default=None
     ),
+
     class_id: int | None = Query(
         default=None
     ),
+
     exam_id: int | None = Query(
         default=None
     ),
+
     subject: str | None = Query(
         default=None
     ),
+
+    page: int = Query(
+        default=1,
+        ge=1,
+    ),
+
+    page_size: int = Query(
+        default=50,
+        ge=1,
+        le=100,
+    ),
+
     db: Session = Depends(get_db),
 ):
     query = (
@@ -224,9 +237,9 @@ def get_admin_results(
         )
     )
 
-    # -----------------------------------------------------
+    # ---------------------------------------------
     # SEARCH
-    # -----------------------------------------------------
+    # ---------------------------------------------
 
     if search:
         search_value = (
@@ -250,9 +263,9 @@ def get_admin_results(
             )
         )
 
-    # -----------------------------------------------------
+    # ---------------------------------------------
     # CLASS FILTER
-    # -----------------------------------------------------
+    # ---------------------------------------------
 
     if class_id is not None:
         query = query.filter(
@@ -260,9 +273,9 @@ def get_admin_results(
             == class_id
         )
 
-    # -----------------------------------------------------
+    # ---------------------------------------------
     # EXAM FILTER
-    # -----------------------------------------------------
+    # ---------------------------------------------
 
     if exam_id is not None:
         query = query.filter(
@@ -270,15 +283,34 @@ def get_admin_results(
             == exam_id
         )
 
-    # -----------------------------------------------------
+    # ---------------------------------------------
     # SUBJECT FILTER
-    # -----------------------------------------------------
+    # ---------------------------------------------
 
     if subject:
         query = query.filter(
             StudentResult.subject
             == subject.strip()
         )
+
+    # ---------------------------------------------
+    # TOTAL
+    # ---------------------------------------------
+
+    total = query.count()
+
+    total_pages = (
+        (total + page_size - 1)
+        // page_size
+    )
+
+    offset = (
+        page - 1
+    ) * page_size
+
+    # ---------------------------------------------
+    # PAGINATED ROWS
+    # ---------------------------------------------
 
     rows = (
         query
@@ -288,10 +320,12 @@ def get_admin_results(
             Student.roll_no.asc(),
             Student.id.asc(),
         )
+        .offset(offset)
+        .limit(page_size)
         .all()
     )
 
-    return [
+    data = [
         build_result_response(
             result=result,
             student=student,
@@ -305,6 +339,18 @@ def get_admin_results(
             exam,
         ) in rows
     ]
+
+    return {
+        "data": data,
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "total_pages": total_pages,
+        "has_next":
+            page < total_pages,
+        "has_previous":
+            page > 1,
+    }
 
 
 # =========================================================

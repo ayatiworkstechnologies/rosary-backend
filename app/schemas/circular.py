@@ -24,6 +24,12 @@ class CircularResponse(BaseModel):
 class CircularListResponse(BaseModel):
     total: int
 
+    page: int
+    page_size: int
+    total_pages: int
+    has_next: bool
+    has_previous: bool
+
     circulars: list[
         CircularResponse
     ]

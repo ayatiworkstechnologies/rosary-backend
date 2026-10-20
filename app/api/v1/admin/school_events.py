@@ -155,13 +155,111 @@ def get_admin_school_events(
     search: str | None = None,
     event_type: str | None = None,
     audience: str | None = None,
+
     is_active: bool | None = Query(
         default=None
     ),
+
+    page: int = Query(
+        default=1,
+        ge=1,
+    ),
+
+    page_size: int = Query(
+        default=20,
+        ge=1,
+        le=100,
+    ),
+
     db: Session = Depends(get_db),
 ):
     try:
-        sql = """
+        where_sql = """
+            FROM school_events AS se
+
+            LEFT JOIN school_classes AS sc
+                ON sc.id = se.class_id
+
+            LEFT JOIN users AS u
+                ON u.id = se.created_by
+
+            WHERE 1 = 1
+        """
+
+        params = {}
+
+        # SEARCH
+        if search:
+            where_sql += """
+                AND (
+                    se.title LIKE :search
+                    OR se.description LIKE :search
+                    OR se.location LIKE :search
+                    OR se.event_type LIKE :search
+                )
+            """
+
+            params["search"] = (
+                f"%{search.strip()}%"
+            )
+
+        # EVENT TYPE
+        if event_type:
+            where_sql += """
+                AND se.event_type = :event_type
+            """
+
+            params["event_type"] = (
+                event_type.strip()
+            )
+
+        # AUDIENCE
+        if audience:
+            where_sql += """
+                AND se.audience = :audience
+            """
+
+            params["audience"] = (
+                audience.strip().upper()
+            )
+
+        # STATUS
+        if is_active is not None:
+            where_sql += """
+                AND se.is_active = :is_active
+            """
+
+            params["is_active"] = (
+                is_active
+            )
+
+        # TOTAL COUNT
+        total = db.execute(
+            text(
+                f"""
+                SELECT COUNT(*)
+                {where_sql}
+                """
+            ),
+            params,
+        ).scalar() or 0
+
+        total_pages = (
+            (total + page_size - 1)
+            // page_size
+        )
+
+        offset = (
+            page - 1
+        ) * page_size
+
+        query_params = {
+            **params,
+            "limit": page_size,
+            "offset": offset,
+        }
+
+        sql = f"""
             SELECT
                 se.id,
                 se.title,
@@ -185,77 +283,20 @@ def get_admin_school_events(
 
                 u.name AS creator_name
 
-            FROM school_events AS se
+            {where_sql}
 
-            LEFT JOIN school_classes AS sc
-                ON sc.id = se.class_id
-
-            LEFT JOIN users AS u
-                ON u.id = se.created_by
-
-            WHERE 1 = 1
-        """
-
-        params = {}
-
-        # SEARCH
-        if search:
-            sql += """
-                AND (
-                    se.title LIKE :search
-                    OR se.description LIKE :search
-                    OR se.location LIKE :search
-                    OR se.event_type LIKE :search
-                )
-            """
-
-            params["search"] = (
-                f"%{search.strip()}%"
-            )
-
-        # EVENT TYPE
-        if event_type:
-            sql += """
-                AND se.event_type =
-                    :event_type
-            """
-
-            params["event_type"] = (
-                event_type.strip()
-            )
-
-        # AUDIENCE
-        if audience:
-            sql += """
-                AND se.audience =
-                    :audience
-            """
-
-            params["audience"] = (
-                audience.strip().upper()
-            )
-
-        # STATUS
-        if is_active is not None:
-            sql += """
-                AND se.is_active =
-                    :is_active
-            """
-
-            params["is_active"] = (
-                is_active
-            )
-
-        sql += """
             ORDER BY
                 se.start_date DESC,
                 se.start_time DESC,
                 se.id DESC
+
+            LIMIT :limit
+            OFFSET :offset
         """
 
         rows = db.execute(
             text(sql),
-            params,
+            query_params,
         ).mappings().all()
 
         events = []
@@ -302,9 +343,7 @@ def get_admin_school_events(
                                 row["class_id"],
 
                             "name":
-                                row[
-                                    "class_name"
-                                ],
+                                row["class_name"],
 
                             "section":
                                 row[
@@ -341,8 +380,18 @@ def get_admin_school_events(
 
         return {
             "success": True,
-            "total": len(events),
             "data": events,
+
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": total_pages,
+                "has_next":
+                    page < total_pages,
+                "has_previous":
+                    page > 1,
+            },
         }
 
     except HTTPException:

@@ -17,3 +17,14 @@ class NotificationResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class NotificationListResponse(BaseModel):
+    data: list[NotificationResponse]
+
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+    has_next: bool
+    has_previous: bool
+    

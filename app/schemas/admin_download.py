@@ -61,3 +61,13 @@ class AdminDownloadResponse(BaseModel):
     updated_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+class AdminDownloadListResponse(BaseModel):
+    data: list[AdminDownloadResponse]
+
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+    has_next: bool
+    has_previous: bool
