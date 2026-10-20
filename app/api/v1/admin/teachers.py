@@ -4,7 +4,7 @@ from fastapi import (
     HTTPException,
     status,
 )
-
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -67,12 +67,116 @@ def get_teacher_profile_or_404(
 
 @router.get("")
 def get_admin_teachers(
+    search: str | None = Query(default=None),
+    is_active: bool | None = Query(default=None),
+
+    page: int = Query(
+        default=1,
+        ge=1,
+    ),
+
+    page_size: int = Query(
+        default=25,
+        ge=1,
+        le=100,
+    ),
+
     db: Session = Depends(get_db),
 ):
     try:
+        conditions = [
+            "u.role = 'TEACHER'"
+        ]
+
+        params = {}
+
+        # -----------------------------------------
+        # SEARCH
+        # -----------------------------------------
+
+        if search:
+            conditions.append(
+                """
+                (
+                    u.name LIKE :search
+                    OR u.username LIKE :search
+                    OR u.email LIKE :search
+                    OR tp.employee_id LIKE :search
+                    OR tp.phone LIKE :search
+                    OR tp.department LIKE :search
+                    OR tp.designation LIKE :search
+                )
+                """
+            )
+
+            params["search"] = (
+                f"%{search.strip()}%"
+            )
+
+        # -----------------------------------------
+        # STATUS FILTER
+        # -----------------------------------------
+
+        if is_active is not None:
+            conditions.append(
+                "u.is_active = :is_active"
+            )
+
+            params["is_active"] = (
+                1 if is_active else 0
+            )
+
+        where_clause = (
+            "WHERE "
+            + " AND ".join(conditions)
+        )
+
+        # -----------------------------------------
+        # TOTAL COUNT
+        # -----------------------------------------
+
+        total_result = db.execute(
+            text(
+                f"""
+                SELECT COUNT(*) AS total
+
+                FROM teacher_profiles AS tp
+
+                INNER JOIN users AS u
+                    ON u.id = tp.user_id
+
+                {where_clause}
+                """
+            ),
+            params,
+        )
+
+        total = (
+            total_result.scalar()
+            or 0
+        )
+
+        # -----------------------------------------
+        # PAGINATION
+        # -----------------------------------------
+
+        offset = (
+            page - 1
+        ) * page_size
+
+        query_params = {
+            **params,
+            "limit": page_size,
+            "offset": offset,
+        }
+
+        # -----------------------------------------
+        # TEACHER LIST
+        # -----------------------------------------
+
         rows = db.execute(
             text(
-                """
+                f"""
                 SELECT
                     tp.id AS teacher_id,
                     tp.user_id,
@@ -106,7 +210,7 @@ def get_admin_teachers(
                 LEFT JOIN teacher_classes AS tc
                     ON tc.teacher_user_id = tp.user_id
 
-                WHERE u.role = 'TEACHER'
+                {where_clause}
 
                 GROUP BY
                     tp.id,
@@ -130,9 +234,15 @@ def get_admin_teachers(
                     u.role,
                     u.is_active
 
-                ORDER BY u.name ASC
+                ORDER BY
+                    u.name ASC,
+                    tp.id ASC
+
+                LIMIT :limit
+                OFFSET :offset
                 """
-            )
+            ),
+            query_params,
         ).mappings().all()
 
         teachers = []
@@ -146,44 +256,76 @@ def get_admin_teachers(
                     "username": row["username"],
                     "email": row["email"],
                     "role": row["role"],
+
                     "is_active": bool(
                         row["is_active"]
                     ),
+
                     "employee_id":
                         row["employee_id"],
+
                     "date_of_birth":
                         row["date_of_birth"],
+
                     "gender":
                         row["gender"],
+
                     "phone":
                         row["phone"],
+
                     "designation":
                         row["designation"],
+
                     "department":
                         row["department"],
+
                     "qualification":
                         row["qualification"],
+
                     "specialization":
                         row["specialization"],
+
                     "experience_years":
                         row["experience_years"],
+
                     "joining_date":
                         row["joining_date"],
+
                     "profile_image_url":
                         row["profile_image_url"],
+
                     "class_count":
                         row["class_count"],
+
                     "created_at":
                         row["created_at"],
+
                     "updated_at":
                         row["updated_at"],
                 }
             )
 
+        total_pages = (
+            (total + page_size - 1)
+            // page_size
+        )
+
         return {
             "success": True,
-            "total": len(teachers),
             "data": teachers,
+
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": total_pages,
+                "has_next": (
+                    page < total_pages
+                ),
+                "has_previous": (
+                    page > 1
+                ),
+            },
         }
 
     except HTTPException:
@@ -191,13 +333,15 @@ def get_admin_teachers(
 
     except Exception as e:
         print(
-            "Admin get teachers error:",
+            "Admin teachers list error:",
             str(e),
         )
 
         raise HTTPException(
             status_code=500,
-            detail="Failed to load teachers",
+            detail=(
+                "Failed to load teachers"
+            ),
         )
 
 

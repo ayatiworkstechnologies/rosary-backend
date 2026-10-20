@@ -28,6 +28,12 @@ class ParentDownloadFormResponse(BaseModel):
 class ParentDownloadFormListResponse(BaseModel):
     total: int
 
+    page: int
+    page_size: int
+    total_pages: int
+    has_next: bool
+    has_previous: bool
+
     forms: list[
         ParentDownloadFormResponse
     ]

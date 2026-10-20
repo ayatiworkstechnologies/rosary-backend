@@ -4,6 +4,7 @@ from fastapi import (
     HTTPException,
     status,
 )
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -28,26 +29,71 @@ router = APIRouter(
 
 @router.get("/parent-options")
 def get_admin_parents(
+    search: str | None = Query(
+        default=None
+    ),
+
+    limit: int = Query(
+        default=20,
+        ge=1,
+        le=50,
+    ),
+
     db: Session = Depends(get_db),
 ):
     try:
-        rows = db.execute(
-            text(
-                """
-                SELECT
-                    id,
-                    user_id,
-                    phone,
-                    alternate_phone,
-                    occupation,
-                    city,
-                    state
+        sql = """
+            SELECT
+                pp.id,
+                pp.user_id,
+                pp.phone,
+                pp.alternate_phone,
+                pp.occupation,
+                pp.city,
+                pp.state,
 
-                FROM parent_profiles
+                u.name,
+                u.username,
+                u.email
 
-                ORDER BY user_id ASC
-                """
+            FROM parent_profiles AS pp
+
+            LEFT JOIN users AS u
+                ON u.id = pp.user_id
+
+            WHERE 1 = 1
+        """
+
+        params = {
+            "limit": limit,
+        }
+
+        if search:
+            sql += """
+                AND (
+                    u.name LIKE :search
+                    OR u.username LIKE :search
+                    OR u.email LIKE :search
+                    OR pp.phone LIKE :search
+                    OR pp.alternate_phone LIKE :search
+                )
+            """
+
+            params["search"] = (
+                f"%{search.strip()}%"
             )
+
+        sql += """
+            ORDER BY
+                u.name ASC,
+                pp.id ASC
+
+            LIMIT :limit
+        """
+
+        rows = db.execute(
+            text(sql),
+            params,
         ).mappings().all()
 
         parents = []
@@ -55,21 +101,42 @@ def get_admin_parents(
         for row in rows:
             parents.append(
                 {
-                    "id": row["id"],
-                    "user_id": row["user_id"],
-                    "phone": row["phone"],
+                    "id":
+                        row["id"],
+
+                    "user_id":
+                        row["user_id"],
+
+                    "name":
+                        row["name"],
+
+                    "username":
+                        row["username"],
+
+                    "email":
+                        row["email"],
+
+                    "phone":
+                        row["phone"],
+
                     "alternate_phone":
                         row["alternate_phone"],
+
                     "occupation":
                         row["occupation"],
-                    "city": row["city"],
-                    "state": row["state"],
+
+                    "city":
+                        row["city"],
+
+                    "state":
+                        row["state"],
                 }
             )
 
         return {
             "success": True,
             "data": parents,
+            "limit": limit,
         }
 
     except Exception as e:
@@ -90,12 +157,134 @@ def get_admin_parents(
 
 @router.get("/parent-links")
 def get_parent_links(
+    search: str | None = Query(default=None),
+    class_id: int | None = Query(default=None),
+    is_active: bool | None = Query(default=None),
+
+    page: int = Query(
+        default=1,
+        ge=1,
+    ),
+
+    page_size: int = Query(
+        default=25,
+        ge=1,
+        le=100,
+    ),
+
     db: Session = Depends(get_db),
 ):
     try:
+        conditions = []
+        params = {}
+
+        # -----------------------------------------
+        # SEARCH
+        # -----------------------------------------
+
+        if search:
+            conditions.append(
+                """
+                (
+                    s.full_name LIKE :search
+                    OR s.admission_no LIKE :search
+                    OR s.roll_no LIKE :search
+                    OR pp.phone LIKE :search
+                )
+                """
+            )
+
+            params["search"] = (
+                f"%{search.strip()}%"
+            )
+
+        # -----------------------------------------
+        # CLASS FILTER
+        # -----------------------------------------
+
+        if class_id is not None:
+            conditions.append(
+                "s.class_id = :class_id"
+            )
+
+            params["class_id"] = class_id
+
+        # -----------------------------------------
+        # STUDENT STATUS FILTER
+        # -----------------------------------------
+
+        if is_active is not None:
+            conditions.append(
+                "s.is_active = :is_active"
+            )
+
+            params["is_active"] = (
+                1 if is_active else 0
+            )
+
+        where_clause = ""
+
+        if conditions:
+            where_clause = (
+                "WHERE "
+                + " AND ".join(conditions)
+            )
+
+        # -----------------------------------------
+        # TOTAL COUNT
+        # -----------------------------------------
+
+        total_result = db.execute(
+            text(
+                f"""
+                SELECT COUNT(*) AS total
+
+                FROM parent_students AS ps
+
+                LEFT JOIN parent_profiles AS pp
+                    ON pp.user_id =
+                       ps.parent_user_id
+
+                INNER JOIN students AS s
+                    ON s.id =
+                       ps.student_id
+
+                LEFT JOIN school_classes AS sc
+                    ON sc.id =
+                       s.class_id
+
+                {where_clause}
+                """
+            ),
+            params,
+        )
+
+        total = (
+            total_result.scalar()
+            or 0
+        )
+
+        # -----------------------------------------
+        # PAGINATION
+        # -----------------------------------------
+
+        offset = (
+            page - 1
+        ) * page_size
+
+        query_params = {
+            **params,
+            "limit": page_size,
+            "offset": offset,
+        }
+
+        # -----------------------------------------
+        # PARENT-STUDENT LINKS
+        # -----------------------------------------
+
         rows = db.execute(
             text(
-                """
+                f"""
                 SELECT
                     ps.id,
                     ps.parent_user_id,
@@ -130,11 +319,17 @@ def get_parent_links(
                     ON sc.id =
                        s.class_id
 
+                {where_clause}
+
                 ORDER BY
                     s.full_name ASC,
                     ps.id ASC
+
+                LIMIT :limit
+                OFFSET :offset
                 """
-            )
+            ),
+            query_params,
         ).mappings().all()
 
         links = []
@@ -149,14 +344,10 @@ def get_parent_links(
 
                     "parent": {
                         "user_id":
-                            row[
-                                "parent_user_id"
-                            ],
+                            row["parent_user_id"],
 
                         "phone":
-                            row[
-                                "parent_phone"
-                            ],
+                            row["parent_phone"],
                     },
 
                     "student_id":
@@ -164,34 +355,22 @@ def get_parent_links(
 
                     "student": {
                         "id":
-                            row[
-                                "student_id"
-                            ],
+                            row["student_id"],
 
                         "admission_no":
-                            row[
-                                "admission_no"
-                            ],
+                            row["admission_no"],
 
                         "roll_no":
-                            row[
-                                "roll_no"
-                            ],
+                            row["roll_no"],
 
                         "full_name":
-                            row[
-                                "full_name"
-                            ],
+                            row["full_name"],
 
                         "gender":
-                            row[
-                                "gender"
-                            ],
+                            row["gender"],
 
                         "class_id":
-                            row[
-                                "class_id"
-                            ],
+                            row["class_id"],
 
                         "is_active":
                             bool(
@@ -229,20 +408,38 @@ def get_parent_links(
                     },
 
                     "relationship":
-                        row[
-                            "relationship"
-                        ],
+                        row["relationship"],
 
                     "created_at":
                         row["created_at"],
                 }
             )
 
+        total_pages = (
+            (total + page_size - 1)
+            // page_size
+        )
+
         return {
             "success": True,
-            "total": len(links),
             "data": links,
+
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": total_pages,
+                "has_next": (
+                    page < total_pages
+                ),
+                "has_previous": (
+                    page > 1
+                ),
+            },
         }
+
+    except HTTPException:
+        raise
 
     except Exception as e:
         print(

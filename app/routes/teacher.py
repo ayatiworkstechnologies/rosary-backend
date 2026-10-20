@@ -1,5 +1,7 @@
 from datetime import date
-
+from datetime import date
+from fastapi import Query
+from sqlalchemy import or_
 from fastapi import (
     APIRouter,
     Depends,
@@ -53,7 +55,7 @@ from app.schemas.teacher import (
 from app.schemas.teacher_profile import TeacherProfileResponse
 
 from app.services.notification_service import create_notification
-
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 
 router = APIRouter(
     prefix="/api/v1/teacher",
@@ -925,7 +927,20 @@ def get_teacher_classes(
 def get_teacher_circulars(
     category: str | None = None,
     search: str | None = None,
+
+    page: int = Query(
+        default=1,
+        ge=1,
+    ),
+
+    page_size: int = Query(
+        default=20,
+        ge=1,
+        le=100,
+    ),
+
     db: Session = Depends(get_db),
+
     current_teacher: User = Depends(
         get_current_teacher
     ),
@@ -1008,12 +1023,25 @@ def get_teacher_circulars(
             )
         )
 
+    total = query.count()
+
+    total_pages = (
+        (total + page_size - 1)
+        // page_size
+    )
+
+    offset = (
+        page - 1
+    ) * page_size
+
     circular_rows = (
         query
         .order_by(
             Circular.published_date.desc(),
             Circular.id.desc(),
         )
+        .offset(offset)
+        .limit(page_size)
         .all()
     )
 
@@ -1071,7 +1099,22 @@ def get_teacher_circulars(
 
     return {
         "total":
-            len(circulars),
+            total,
+
+        "page":
+            page,
+
+        "page_size":
+            page_size,
+
+        "total_pages":
+            total_pages,
+
+        "has_next":
+            page < total_pages,
+
+        "has_previous":
+            page > 1,
 
         "circulars":
             circulars,
@@ -1241,7 +1284,32 @@ def get_teacher_calendar(
 )
 def get_class_homework(
     class_id: int,
+
+    search: str | None = Query(
+        default=None
+    ),
+
+    from_date: date | None = Query(
+        default=None
+    ),
+
+    to_date: date | None = Query(
+        default=None
+    ),
+
+    page: int = Query(
+        default=1,
+        ge=1,
+    ),
+
+    page_size: int = Query(
+        default=20,
+        ge=1,
+        le=100,
+    ),
+
     db: Session = Depends(get_db),
+
     current_teacher: User = Depends(
         get_current_teacher
     ),
@@ -1313,10 +1381,10 @@ def get_class_homework(
         )
 
     # -----------------------------------------------------
-    # ONLY THIS TEACHER'S ASSIGNED SUBJECT HOMEWORK
+    # BASE QUERY
     # -----------------------------------------------------
 
-    rows = (
+    query = (
         db.query(Homework)
         .filter(
             Homework.class_id
@@ -1329,11 +1397,77 @@ def get_class_homework(
                 True
             ),
         )
-        .order_by(
-            Homework.created_at.desc()
+    )
+
+    # -----------------------------------------------------
+    # SEARCH
+    # -----------------------------------------------------
+
+    if search:
+        search_value = (
+            f"%{search.strip()}%"
         )
+
+        query = query.filter(
+            or_(
+                Homework.title.ilike(
+                    search_value
+                ),
+                Homework.description.ilike(
+                    search_value
+                ),
+            )
+        )
+
+    # -----------------------------------------------------
+    # DATE FILTERS
+    # -----------------------------------------------------
+
+    if from_date is not None:
+        query = query.filter(
+            Homework.assigned_date
+            >= from_date
+        )
+
+    if to_date is not None:
+        query = query.filter(
+            Homework.assigned_date
+            <= to_date
+        )
+
+    # -----------------------------------------------------
+    # TOTAL
+    # -----------------------------------------------------
+
+    total = query.count()
+
+    # -----------------------------------------------------
+    # PAGINATION
+    # -----------------------------------------------------
+
+    total_pages = (
+        (total + page_size - 1)
+        // page_size
+    )
+
+    offset = (
+        page - 1
+    ) * page_size
+
+    rows = (
+        query
+        .order_by(
+            Homework.created_at.desc(),
+            Homework.id.desc(),
+        )
+        .offset(offset)
+        .limit(page_size)
         .all()
     )
+
+    # -----------------------------------------------------
+    # RESPONSE
+    # -----------------------------------------------------
 
     class_name = (
         f"{school_class.name} - "
@@ -1391,12 +1525,26 @@ def get_class_homework(
             class_name,
 
         "total":
-            len(homework_list),
+            total,
+
+        "page":
+            page,
+
+        "page_size":
+            page_size,
+
+        "total_pages":
+            total_pages,
+
+        "has_next":
+            page < total_pages,
+
+        "has_previous":
+            page > 1,
 
         "homework":
             homework_list,
     }
-
 
 # =========================================================
 # CREATE HOMEWORK

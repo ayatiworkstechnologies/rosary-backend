@@ -123,37 +123,28 @@ def validate_audience(
 @router.get("")
 def get_admin_circulars(
     search: str | None = None,
-
     category: str | None = None,
-
     audience: str | None = None,
 
     is_active: bool | None = Query(
         default=None
     ),
 
+    page: int = Query(
+        default=1,
+        ge=1,
+    ),
+
+    page_size: int = Query(
+        default=20,
+        ge=1,
+        le=100,
+    ),
+
     db: Session = Depends(get_db),
 ):
     try:
-        sql = """
-            SELECT
-                c.id,
-                c.title,
-                c.category,
-                c.description,
-                c.published_date,
-                c.audience,
-                c.class_id,
-                c.attachment_url,
-                c.created_by,
-                c.is_active,
-                c.created_at,
-                c.updated_at,
-
-                sc.name AS class_name,
-                sc.section AS class_section,
-                sc.academic_year
-
+        where_sql = """
             FROM circulars AS c
 
             LEFT JOIN school_classes AS sc
@@ -169,7 +160,7 @@ def get_admin_circulars(
         # -----------------------------------------
 
         if search:
-            sql += """
+            where_sql += """
                 AND (
                     c.title LIKE :search
                     OR c.description LIKE :search
@@ -186,7 +177,7 @@ def get_admin_circulars(
         # -----------------------------------------
 
         if category:
-            sql += """
+            where_sql += """
                 AND c.category = :category
             """
 
@@ -209,12 +200,10 @@ def get_admin_circulars(
             ):
                 raise HTTPException(
                     status_code=400,
-                    detail=(
-                        "Invalid audience"
-                    ),
+                    detail="Invalid audience",
                 )
 
-            sql += """
+            where_sql += """
                 AND c.audience = :audience
             """
 
@@ -227,7 +216,7 @@ def get_admin_circulars(
         # -----------------------------------------
 
         if is_active is not None:
-            sql += """
+            where_sql += """
                 AND c.is_active = :is_active
             """
 
@@ -235,15 +224,70 @@ def get_admin_circulars(
                 is_active
             )
 
-        sql += """
+        # -----------------------------------------
+        # TOTAL
+        # -----------------------------------------
+
+        total = db.execute(
+            text(
+                f"""
+                SELECT COUNT(*)
+                {where_sql}
+                """
+            ),
+            params,
+        ).scalar() or 0
+
+        # -----------------------------------------
+        # PAGINATION
+        # -----------------------------------------
+
+        offset = (
+            page - 1
+        ) * page_size
+
+        query_params = {
+            **params,
+            "limit": page_size,
+            "offset": offset,
+        }
+
+        # -----------------------------------------
+        # LIST
+        # -----------------------------------------
+
+        sql = f"""
+            SELECT
+                c.id,
+                c.title,
+                c.category,
+                c.description,
+                c.published_date,
+                c.audience,
+                c.class_id,
+                c.attachment_url,
+                c.created_by,
+                c.is_active,
+                c.created_at,
+                c.updated_at,
+
+                sc.name AS class_name,
+                sc.section AS class_section,
+                sc.academic_year
+
+            {where_sql}
+
             ORDER BY
                 c.published_date DESC,
                 c.id DESC
+
+            LIMIT :limit
+            OFFSET :offset
         """
 
         rows = db.execute(
             text(sql),
-            params,
+            query_params,
         ).mappings().all()
 
         circulars = []
@@ -315,10 +359,25 @@ def get_admin_circulars(
                 }
             )
 
+        total_pages = (
+            (total + page_size - 1)
+            // page_size
+        )
+
         return {
             "success": True,
-            "total": len(circulars),
             "data": circulars,
+
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": total_pages,
+                "has_next":
+                    page < total_pages,
+                "has_previous":
+                    page > 1,
+            },
         }
 
     except HTTPException:
@@ -336,7 +395,6 @@ def get_admin_circulars(
                 "Failed to load circulars"
             ),
         )
-
 
 # =========================================================
 # GET SINGLE CIRCULAR

@@ -4,7 +4,9 @@ from fastapi import (
     HTTPException,
     status,
 )
-
+from datetime import date
+from fastapi import Query
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -127,16 +129,16 @@ def get_child_result_exams(
     # -----------------------------------------------------
 
     relation = (
-        db.query(ParentStudent)
-        .filter(
-            ParentStudent.parent_user_id
-            == current_parent.id,
+    db.query(ParentStudent)
+    .filter(
+        ParentStudent.parent_user_id
+        == current_parent.id,
 
-            ParentStudent.student_id
-            == student_id,
-        )
-        .first()
+        ParentStudent.student_id
+        == student_id,
     )
+    .first()
+)
 
     if not relation:
         raise HTTPException(
@@ -179,6 +181,8 @@ def get_child_result_exams(
             == student_id,
 
             Exam.is_active.is_(True),
+
+            Exam.results_published.is_(True),
         )
         .distinct()
         .order_by(
@@ -301,6 +305,7 @@ def get_child_results(
         .filter(
             Exam.id == exam_id,
             Exam.is_active.is_(True),
+            Exam.results_published.is_(True),
         )
         .first()
     )
@@ -966,8 +971,32 @@ def get_child_attendance(
 )
 def get_child_homework(
     student_id: int,
-    search: str | None = None,
+
+    search: str | None = Query(
+        default=None
+    ),
+
+    from_date: date | None = Query(
+        default=None
+    ),
+
+    to_date: date | None = Query(
+        default=None
+    ),
+
+    page: int = Query(
+        default=1,
+        ge=1,
+    ),
+
+    page_size: int = Query(
+        default=10,
+        ge=1,
+        le=100,
+    ),
+
     db: Session = Depends(get_db),
+
     current_parent: User = Depends(
         get_current_parent
     ),
@@ -996,7 +1025,7 @@ def get_child_homework(
         )
 
     # -----------------------------------------------------
-    # Get student
+    # GET STUDENT
     # -----------------------------------------------------
 
     student = (
@@ -1015,7 +1044,7 @@ def get_child_homework(
         )
 
     # -----------------------------------------------------
-    # Student must have class
+    # STUDENT MUST HAVE CLASS
     # -----------------------------------------------------
 
     if not student.class_id:
@@ -1025,7 +1054,7 @@ def get_child_homework(
         )
 
     # -----------------------------------------------------
-    # Get class
+    # GET CLASS
     # -----------------------------------------------------
 
     school_class = (
@@ -1049,7 +1078,7 @@ def get_child_homework(
     )
 
     # -----------------------------------------------------
-    # Homework query
+    # HOMEWORK QUERY
     # -----------------------------------------------------
 
     query = (
@@ -1071,7 +1100,7 @@ def get_child_homework(
     )
 
     # -----------------------------------------------------
-    # Optional search
+    # SEARCH
     # -----------------------------------------------------
 
     if search:
@@ -1096,8 +1125,39 @@ def get_child_homework(
         )
 
     # -----------------------------------------------------
-    # Order newest first
+    # DATE FILTERS
     # -----------------------------------------------------
+
+    if from_date is not None:
+        query = query.filter(
+            Homework.assigned_date
+            >= from_date
+        )
+
+    if to_date is not None:
+        query = query.filter(
+            Homework.assigned_date
+            <= to_date
+        )
+
+    # -----------------------------------------------------
+    # TOTAL
+    # -----------------------------------------------------
+
+    total = query.count()
+
+    # -----------------------------------------------------
+    # PAGINATION
+    # -----------------------------------------------------
+
+    total_pages = (
+        (total + page_size - 1)
+        // page_size
+    )
+
+    offset = (
+        page - 1
+    ) * page_size
 
     rows = (
         query
@@ -1105,11 +1165,13 @@ def get_child_homework(
             Homework.assigned_date.desc(),
             Homework.id.desc(),
         )
+        .offset(offset)
+        .limit(page_size)
         .all()
     )
 
     # -----------------------------------------------------
-    # Build response
+    # BUILD RESPONSE
     # -----------------------------------------------------
 
     today = date.today()
@@ -1188,7 +1250,22 @@ def get_child_homework(
             class_name,
 
         "total":
-            len(homework_list),
+            total,
+
+        "page":
+            page,
+
+        "page_size":
+            page_size,
+
+        "total_pages":
+            total_pages,
+
+        "has_next":
+            page < total_pages,
+
+        "has_previous":
+            page > 1,
 
         "homework":
             homework_list,
@@ -1466,7 +1543,20 @@ def get_parent_circulars(
     student_id: int | None = None,
     category: str | None = None,
     search: str | None = None,
+
+    page: int = Query(
+        default=1,
+        ge=1,
+    ),
+
+    page_size: int = Query(
+        default=10,
+        ge=1,
+        le=100,
+    ),
+
     db: Session = Depends(get_db),
+
     current_parent: User = Depends(
         get_current_parent
     ),
@@ -1527,10 +1617,7 @@ def get_parent_circulars(
 
     if student_id is not None:
 
-        # Security:
-        # Parent can only filter using their own child.
         if student_id not in linked_student_ids:
-
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Child not found",
@@ -1573,7 +1660,6 @@ def get_parent_circulars(
     # -----------------------------------------------------
 
     if selected_class_ids:
-
         audience_conditions.append(
             (
                 Circular.audience
@@ -1607,14 +1693,11 @@ def get_parent_circulars(
     # -----------------------------------------------------
 
     if category:
-
         clean_category = (
-            category
-            .strip()
+            category.strip()
         )
 
         if clean_category:
-
             query = query.filter(
                 Circular.category
                 == clean_category
@@ -1625,14 +1708,11 @@ def get_parent_circulars(
     # -----------------------------------------------------
 
     if search:
-
         clean_search = (
-            search
-            .strip()
+            search.strip()
         )
 
         if clean_search:
-
             search_value = (
                 f"%{clean_search}%"
             )
@@ -1654,7 +1734,22 @@ def get_parent_circulars(
             )
 
     # -----------------------------------------------------
-    # ORDER
+    # TOTAL
+    # -----------------------------------------------------
+
+    total = query.count()
+
+    total_pages = (
+        (total + page_size - 1)
+        // page_size
+    )
+
+    offset = (
+        page - 1
+    ) * page_size
+
+    # -----------------------------------------------------
+    # ORDER + PAGINATION
     # -----------------------------------------------------
 
     rows = (
@@ -1663,6 +1758,8 @@ def get_parent_circulars(
             Circular.published_date.desc(),
             Circular.id.desc(),
         )
+        .offset(offset)
+        .limit(page_size)
         .all()
     )
 
@@ -1727,7 +1824,22 @@ def get_parent_circulars(
 
     return {
         "total":
-            len(circulars),
+            total,
+
+        "page":
+            page,
+
+        "page_size":
+            page_size,
+
+        "total_pages":
+            total_pages,
+
+        "has_next":
+            page < total_pages,
+
+        "has_previous":
+            page > 1,
 
         "circulars":
             circulars,
@@ -2307,7 +2419,20 @@ def get_parent_download_forms(
     student_id: int | None = None,
     category: str | None = None,
     search: str | None = None,
+
+    page: int = Query(
+        default=1,
+        ge=1,
+    ),
+
+    page_size: int = Query(
+        default=10,
+        ge=1,
+        le=100,
+    ),
+
     db: Session = Depends(get_db),
+
     current_parent: User = Depends(
         get_current_parent
     ),
@@ -2484,7 +2609,22 @@ def get_parent_download_forms(
             )
 
     # -----------------------------------------------------
-    # ORDER
+    # TOTAL
+    # -----------------------------------------------------
+
+    total = query.count()
+
+    total_pages = (
+        (total + page_size - 1)
+        // page_size
+    )
+
+    offset = (
+        page - 1
+    ) * page_size
+
+    # -----------------------------------------------------
+    # ORDER + PAGINATION
     # -----------------------------------------------------
 
     rows = (
@@ -2493,8 +2633,14 @@ def get_parent_download_forms(
             DownloadForm.published_date.desc(),
             DownloadForm.id.desc(),
         )
+        .offset(offset)
+        .limit(page_size)
         .all()
     )
+
+    # -----------------------------------------------------
+    # RESPONSE
+    # -----------------------------------------------------
 
     forms = []
 
@@ -2555,7 +2701,22 @@ def get_parent_download_forms(
 
     return {
         "total":
-            len(forms),
+            total,
+
+        "page":
+            page,
+
+        "page_size":
+            page_size,
+
+        "total_pages":
+            total_pages,
+
+        "has_next":
+            page < total_pages,
+
+        "has_previous":
+            page > 1,
 
         "forms":
             forms,
@@ -2940,6 +3101,8 @@ def get_parent_dashboard(
             == student.id,
 
             Exam.is_active.is_(True),
+
+            Exam.results_published.is_(True),
         )
         .order_by(
             Exam.start_date.desc(),

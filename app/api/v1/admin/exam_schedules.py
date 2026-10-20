@@ -17,6 +17,7 @@ from app.schemas.admin_exam_schedule import (
     AdminExamScheduleCreate,
     AdminExamScheduleResponse,
     AdminExamScheduleUpdate,
+    AdminExamScheduleListResponse,
 )
 
 
@@ -69,20 +70,32 @@ def build_schedule_response(
 
 @router.get(
     "",
-    response_model=list[
-        AdminExamScheduleResponse
-    ],
+    response_model=AdminExamScheduleListResponse,
 )
 def get_exam_schedules(
     exam_id: int | None = Query(
         default=None
     ),
+
     class_id: int | None = Query(
         default=None
     ),
+
     subject: str | None = Query(
         default=None
     ),
+
+    page: int = Query(
+        default=1,
+        ge=1,
+    ),
+
+    page_size: int = Query(
+        default=50,
+        ge=1,
+        le=100,
+    ),
+
     db: Session = Depends(get_db),
 ):
     query = (
@@ -122,16 +135,29 @@ def get_exam_schedules(
             )
         )
 
+    total = query.count()
+
+    total_pages = (
+        (total + page_size - 1)
+        // page_size
+    )
+
+    offset = (
+        page - 1
+    ) * page_size
+
     rows = (
         query
         .order_by(
             ExamSchedule.exam_date.asc(),
             ExamSchedule.start_time.asc(),
         )
+        .offset(offset)
+        .limit(page_size)
         .all()
     )
 
-    return [
+    data = [
         build_schedule_response(
             schedule,
             exam,
@@ -143,6 +169,29 @@ def get_exam_schedules(
             school_class,
         ) in rows
     ]
+
+    return {
+        "data":
+            data,
+
+        "page":
+            page,
+
+        "page_size":
+            page_size,
+
+        "total":
+            total,
+
+        "total_pages":
+            total_pages,
+
+        "has_next":
+            page < total_pages,
+
+        "has_previous":
+            page > 1,
+    }
 
 
 # =========================================================

@@ -36,6 +36,12 @@ class ParentHomeworkListResponse(BaseModel):
 
     total: int
 
+    page: int
+    page_size: int
+    total_pages: int
+    has_next: bool
+    has_previous: bool
+
     homework: list[
         ParentHomeworkItemResponse
     ]

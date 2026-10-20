@@ -4,6 +4,7 @@ from fastapi import (
     HTTPException,
     status,
 )
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -96,12 +97,115 @@ def get_parent_profile_or_404(
 
 @router.get("")
 def get_admin_parents(
+    search: str | None = Query(default=None),
+    is_active: bool | None = Query(default=None),
+
+    page: int = Query(
+        default=1,
+        ge=1,
+    ),
+
+    page_size: int = Query(
+        default=25,
+        ge=1,
+        le=100,
+    ),
+
     db: Session = Depends(get_db),
 ):
     try:
+        conditions = [
+            "u.role = 'PARENT'"
+        ]
+
+        params = {}
+
+        # -----------------------------------------
+        # SEARCH
+        # -----------------------------------------
+
+        if search:
+            conditions.append(
+                """
+                (
+                    u.name LIKE :search
+                    OR u.username LIKE :search
+                    OR u.email LIKE :search
+                    OR pp.phone LIKE :search
+                    OR pp.alternate_phone LIKE :search
+                    OR pp.city LIKE :search
+                )
+                """
+            )
+
+            params["search"] = (
+                f"%{search.strip()}%"
+            )
+
+        # -----------------------------------------
+        # STATUS FILTER
+        # -----------------------------------------
+
+        if is_active is not None:
+            conditions.append(
+                "u.is_active = :is_active"
+            )
+
+            params["is_active"] = (
+                1 if is_active else 0
+            )
+
+        where_clause = (
+            "WHERE "
+            + " AND ".join(conditions)
+        )
+
+        # -----------------------------------------
+        # TOTAL COUNT
+        # -----------------------------------------
+
+        total_result = db.execute(
+            text(
+                f"""
+                SELECT COUNT(*) AS total
+
+                FROM parent_profiles AS pp
+
+                INNER JOIN users AS u
+                    ON u.id = pp.user_id
+
+                {where_clause}
+                """
+            ),
+            params,
+        )
+
+        total = (
+            total_result.scalar()
+            or 0
+        )
+
+        # -----------------------------------------
+        # PAGINATION
+        # -----------------------------------------
+
+        offset = (
+            page - 1
+        ) * page_size
+
+        query_params = {
+            **params,
+            "limit": page_size,
+            "offset": offset,
+        }
+
+        # -----------------------------------------
+        # PARENT LIST
+        # -----------------------------------------
+
         rows = db.execute(
             text(
-                """
+                f"""
                 SELECT
                     pp.id AS parent_id,
                     pp.user_id,
@@ -133,7 +237,7 @@ def get_admin_parents(
                 LEFT JOIN parent_students AS ps
                     ON ps.parent_user_id = pp.user_id
 
-                WHERE u.role = 'PARENT'
+                {where_clause}
 
                 GROUP BY
                     pp.id,
@@ -154,9 +258,15 @@ def get_admin_parents(
                     u.role,
                     u.is_active
 
-                ORDER BY u.name ASC
+                ORDER BY
+                    u.name ASC,
+                    pp.id ASC
+
+                LIMIT :limit
+                OFFSET :offset
                 """
-            )
+            ),
+            query_params,
         ).mappings().all()
 
         parents = []
@@ -210,10 +320,27 @@ def get_admin_parents(
                 }
             )
 
+        total_pages = (
+            (total + page_size - 1)
+            // page_size
+        )
+
         return {
             "success": True,
-            "total": len(parents),
             "data": parents,
+
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": total_pages,
+                "has_next": (
+                    page < total_pages
+                ),
+                "has_previous": (
+                    page > 1
+                ),
+            },
         }
 
     except HTTPException:
@@ -221,7 +348,7 @@ def get_admin_parents(
 
     except Exception as e:
         print(
-            "Admin get parents error:",
+            "Admin parents list error:",
             str(e),
         )
 

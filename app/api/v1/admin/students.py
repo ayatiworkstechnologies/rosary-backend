@@ -82,15 +82,21 @@ def validate_class(
 
 @router.get("")
 def get_students(
-    search: str | None = Query(
-        default=None,
+    search: str | None = Query(default=None),
+    class_id: int | None = Query(default=None),
+    is_active: bool | None = Query(default=None),
+
+    page: int = Query(
+        default=1,
+        ge=1,
     ),
-    class_id: int | None = Query(
-        default=None,
+
+    page_size: int = Query(
+        default=25,
+        ge=1,
+        le=100,
     ),
-    is_active: bool | None = Query(
-        default=None,
-    ),
+
     db: Session = Depends(get_db),
 ):
     try:
@@ -136,6 +142,41 @@ def get_students(
                 + " AND ".join(conditions)
             )
 
+        # -----------------------------------------
+        # TOTAL COUNT
+        # -----------------------------------------
+
+        total_result = db.execute(
+            text(
+                f"""
+                SELECT COUNT(*) AS total
+                FROM students AS s
+                {where_clause}
+                """
+            ),
+            params,
+        )
+
+        total = total_result.scalar() or 0
+
+        # -----------------------------------------
+        # PAGINATION
+        # -----------------------------------------
+
+        offset = (
+            page - 1
+        ) * page_size
+
+        query_params = {
+            **params,
+            "limit": page_size,
+            "offset": offset,
+        }
+
+        # -----------------------------------------
+        # STUDENTS
+        # -----------------------------------------
+
         result = db.execute(
             text(
                 f"""
@@ -163,9 +204,12 @@ def get_students(
                 ORDER BY
                     s.full_name ASC,
                     s.id ASC
+
+                LIMIT :limit
+                OFFSET :offset
                 """
             ),
-            params,
+            query_params,
         )
 
         rows = result.mappings().all()
@@ -176,35 +220,24 @@ def get_students(
             students.append(
                 {
                     "id": row["id"],
-                    "admission_no": (
-                        row["admission_no"]
-                    ),
+                    "admission_no": row["admission_no"],
                     "roll_no": row["roll_no"],
-                    "full_name": (
-                        row["full_name"]
-                    ),
-                    "date_of_birth": (
-                        row["date_of_birth"]
-                    ),
+                    "full_name": row["full_name"],
+                    "date_of_birth": row["date_of_birth"],
                     "gender": row["gender"],
                     "class_id": row["class_id"],
                     "is_active": bool(
                         row["is_active"]
                     ),
+
                     "class": (
                         {
                             "id": row["class_id"],
-                            "name": (
-                                row["class_name"]
-                            ),
-                            "section": (
-                                row["section"]
-                            ),
-                            "academic_year": (
-                                row[
-                                    "academic_year"
-                                ]
-                            ),
+                            "name": row["class_name"],
+                            "section": row["section"],
+                            "academic_year": row[
+                                "academic_year"
+                            ],
                         }
                         if row["class_id"]
                         is not None
@@ -213,10 +246,23 @@ def get_students(
                 }
             )
 
+        total_pages = (
+            (total + page_size - 1)
+            // page_size
+        )
+
         return {
             "success": True,
-            "total": len(students),
             "data": students,
+
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": total_pages,
+                "has_next": page < total_pages,
+                "has_previous": page > 1,
+            },
         }
 
     except Exception as e:
@@ -227,11 +273,8 @@ def get_students(
 
         raise HTTPException(
             status_code=500,
-            detail=(
-                "Failed to load students"
-            ),
+            detail="Failed to load students",
         )
-
 
 # =========================================================
 # GET SINGLE STUDENT
