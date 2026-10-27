@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
@@ -23,12 +23,57 @@ router = APIRouter(
 
 @router.get("")
 def get_classes(
+     page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+    search: str = Query(""),
+    all_classes: bool = Query(False, alias="all"),
     db: Session = Depends(get_db),
 ):
     try:
-        result = db.execute(
+        keyword = search.strip()
+        search_pattern = f"%{keyword}%"
+
+        where_clause = """
+            WHERE (
+                :search = ''
+                OR name LIKE :search_pattern
+                OR section LIKE :search_pattern
+                OR academic_year LIKE :search_pattern
+            )
+        """
+
+        params = {
+            "search": keyword,
+            "search_pattern": search_pattern,
+        }
+
+        total = db.execute(
             text(
+                f"""
+                SELECT COUNT(*)
+                FROM school_classes
+                {where_clause}
                 """
+            ),
+            params,
+        ).scalar() or 0
+
+        total_pages = max(
+            1,
+            (total + page_size - 1) // page_size,
+        )
+
+        offset = (page - 1) * page_size
+
+        if all_classes:
+            page_size = max(total, 1)
+            offset = 0
+            total_pages = 1
+        
+
+        rows = db.execute(
+            text(
+                f"""
                 SELECT
                     id,
                     name,
@@ -36,39 +81,70 @@ def get_classes(
                     academic_year,
                     is_active
                 FROM school_classes
+                {where_clause}
                 ORDER BY
                     academic_year DESC,
                     name ASC,
-                    section ASC
+                    section ASC,
+                    id ASC
+                LIMIT :page_size
+                OFFSET :offset
+                """
+            ),
+            {
+                **params,
+                "page_size": page_size,
+                "offset": offset,
+            },
+        ).mappings().all()
+
+        classes = [
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "section": row["section"],
+                "academic_year": row["academic_year"],
+                "is_active": bool(row["is_active"]),
+            }
+            for row in rows
+        ]
+
+        summary = db.execute(
+            text(
+                """
+                SELECT
+                    COUNT(*) AS total_classes,
+                    COALESCE(
+                        SUM(CASE WHEN is_active = 1
+                            THEN 1 ELSE 0 END), 0
+                    ) AS active_classes,
+                    COALESCE(
+                        SUM(CASE WHEN is_active = 0
+                            THEN 1 ELSE 0 END), 0
+                    ) AS inactive_classes
+                FROM school_classes
                 """
             )
-        )
-
-        rows = result.mappings().all()
-
-        classes = []
-
-        for row in rows:
-            classes.append(
-                {
-                    "id": row["id"],
-                    "name": row["name"],
-                    "section": row["section"],
-                    "academic_year": row["academic_year"],
-                    "is_active": bool(row["is_active"]),
-                }
-            )
+        ).mappings().first()
 
         return {
             "success": True,
             "data": classes,
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "total_pages": total_pages,
+            "has_next": page < total_pages,
+            "has_previous": page > 1,
+            "summary": {
+                "total_classes": summary["total_classes"],
+                "active_classes": summary["active_classes"],
+                "inactive_classes": summary["inactive_classes"],
+            },
         }
 
     except Exception as e:
-        print(
-            "Admin classes list error:",
-            str(e),
-        )
+        print("Admin classes list error:", str(e))
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
