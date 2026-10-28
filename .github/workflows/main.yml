@@ -9,6 +9,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: sqlite+pysqlite:///:memory:
+      SECRET_KEY: ci-only-secret-key-that-is-at-least-32-bytes
+      ALGORITHM: HS256
 
     steps:
       - name: Checkout repository
