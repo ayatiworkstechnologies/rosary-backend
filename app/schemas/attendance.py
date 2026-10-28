@@ -1,17 +1,51 @@
 from datetime import date
 
-from pydantic import BaseModel
+from pydantic import (
+    BaseModel,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 
 class AttendanceRecordInput(BaseModel):
-    student_id: int
+    student_id: int = Field(gt=0)
     status: str
     remarks: str | None = None
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: str) -> str:
+        normalized = value.strip().upper()
+
+        if normalized not in {"PRESENT", "ABSENT"}:
+            raise ValueError(
+                "Attendance status must be PRESENT or ABSENT"
+            )
+
+        return normalized
 
 
 class AttendanceSaveRequest(BaseModel):
     attendance_date: date
-    records: list[AttendanceRecordInput]
+    records: list[AttendanceRecordInput] = Field(min_length=1)
+
+    @field_validator("attendance_date")
+    @classmethod
+    def validate_date(cls, value: date) -> date:
+        if value > date.today():
+            raise ValueError("Future attendance dates are not allowed")
+
+        return value
+
+    @model_validator(mode="after")
+    def validate_duplicate_students(self):
+        student_ids = [record.student_id for record in self.records]
+
+        if len(student_ids) != len(set(student_ids)):
+            raise ValueError("Duplicate student IDs are not allowed")
+
+        return self
 
 
 class AttendanceStudentResponse(BaseModel):

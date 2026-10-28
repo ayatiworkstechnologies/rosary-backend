@@ -21,7 +21,7 @@ class ExamResponse(BaseModel):
 # =========================================================
 
 class StudentResultInput(BaseModel):
-    student_id: int
+    student_id: int = Field(..., gt=0)
 
     max_marks: float = Field(
         ...,
@@ -97,7 +97,7 @@ class StudentResultInput(BaseModel):
 
 
 class ResultSaveRequest(BaseModel):
-    exam_id: int
+    exam_id: int = Field(..., gt=0)
 
     subject: str = Field(
         ...,
@@ -107,7 +107,16 @@ class ResultSaveRequest(BaseModel):
 
     results: list[
         StudentResultInput
-    ]
+    ] = Field(..., min_length=1)
+
+    @model_validator(mode="after")
+    def validate_unique_students(self):
+        student_ids = [item.student_id for item in self.results]
+
+        if len(student_ids) != len(set(student_ids)):
+            raise ValueError("Duplicate student IDs are not allowed")
+
+        return self
 
 
 # =========================================================
