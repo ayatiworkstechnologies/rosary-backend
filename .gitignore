@@ -17,3 +17,8 @@ rosary_portal.sql
 backups/
 scripts/real_data/reports/
 scripts/real_data/input/
+/student_parent_login_audit.csv
+/parent_usernames_audit.csv
+/parent_login_issues.csv
+/reset_admin_password.py
+/teacher_notification_backup.py
