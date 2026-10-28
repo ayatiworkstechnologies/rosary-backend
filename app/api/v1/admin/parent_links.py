@@ -2,9 +2,9 @@ from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    Query,
     status,
 )
-from fastapi import APIRouter, Depends, HTTPException, Query
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -15,11 +15,13 @@ from app.schemas.admin_parent_link import (
     AdminParentLinkCreate,
     AdminParentLinkUpdate,
 )
+from app.dependencies import get_current_admin
 
 
 router = APIRouter(
     prefix="/admin",
     tags=["Admin Parent Linking"],
+    dependencies=[Depends(get_current_admin)],
 )
 
 
@@ -33,10 +35,10 @@ def get_admin_parents(
         default=None
     ),
 
-    limit: int = Query(
-        default=20,
+    limit: int | None = Query(
+        default=None,
         ge=1,
-        le=50,
+        le=5000,
     ),
 
     db: Session = Depends(get_db),
@@ -64,9 +66,7 @@ def get_admin_parents(
             WHERE 1 = 1
         """
 
-        params = {
-            "limit": limit,
-        }
+        params = {}
 
         if search:
             sql += """
@@ -87,9 +87,14 @@ def get_admin_parents(
             ORDER BY
                 u.name ASC,
                 pp.id ASC
-
-            LIMIT :limit
         """
+
+        # The add-link screen historically loaded every parent into a
+        # dropdown. Keep that contract when no limit is supplied, while also
+        # supporting bounded type-ahead requests from newer clients.
+        if limit is not None:
+            sql += " LIMIT :limit"
+            params["limit"] = limit
 
         rows = db.execute(
             text(sql),
@@ -136,6 +141,7 @@ def get_admin_parents(
         return {
             "success": True,
             "data": parents,
+            "total": len(parents),
             "limit": limit,
         }
 
@@ -186,10 +192,17 @@ def get_parent_links(
             conditions.append(
                 """
                 (
-                    s.full_name LIKE :search
+                    u.name LIKE :search
+                    OR u.username LIKE :search
+                    OR u.email LIKE :search
+                    OR CAST(ps.parent_user_id AS CHAR) LIKE :search
+                    OR s.full_name LIKE :search
                     OR s.admission_no LIKE :search
                     OR s.roll_no LIKE :search
                     OR pp.phone LIKE :search
+                    OR ps.relationship LIKE :search
+                    OR sc.name LIKE :search
+                    OR sc.section LIKE :search
                 )
                 """
             )
@@ -241,6 +254,9 @@ def get_parent_links(
 
                 FROM parent_students AS ps
 
+                INNER JOIN users AS u
+                    ON u.id = ps.parent_user_id
+
                 LEFT JOIN parent_profiles AS pp
                     ON pp.user_id =
                        ps.parent_user_id
@@ -263,6 +279,36 @@ def get_parent_links(
             total_result.scalar()
             or 0
         )
+
+        summary_row = db.execute(
+            text(
+                f"""
+                SELECT
+                    COUNT(*) AS total_links,
+                    COUNT(DISTINCT ps.parent_user_id)
+                        AS parents_linked,
+                    COUNT(DISTINCT ps.student_id)
+                        AS students_linked
+
+                FROM parent_students AS ps
+
+                INNER JOIN users AS u
+                    ON u.id = ps.parent_user_id
+
+                LEFT JOIN parent_profiles AS pp
+                    ON pp.user_id = ps.parent_user_id
+
+                INNER JOIN students AS s
+                    ON s.id = ps.student_id
+
+                LEFT JOIN school_classes AS sc
+                    ON sc.id = s.class_id
+
+                {where_clause}
+                """
+            ),
+            params,
+        ).mappings().one()
 
         # -----------------------------------------
         # PAGINATION
@@ -293,6 +339,9 @@ def get_parent_links(
                     ps.created_at,
 
                     pp.phone AS parent_phone,
+                    u.name AS parent_name,
+                    u.username AS parent_username,
+                    u.email AS parent_email,
 
                     s.admission_no,
                     s.roll_no,
@@ -306,6 +355,9 @@ def get_parent_links(
                     sc.academic_year
 
                 FROM parent_students AS ps
+
+                INNER JOIN users AS u
+                    ON u.id = ps.parent_user_id
 
                 LEFT JOIN parent_profiles AS pp
                     ON pp.user_id =
@@ -345,6 +397,15 @@ def get_parent_links(
                     "parent": {
                         "user_id":
                             row["parent_user_id"],
+
+                        "name":
+                            row["parent_name"],
+
+                        "username":
+                            row["parent_username"],
+
+                        "email":
+                            row["parent_email"],
 
                         "phone":
                             row["parent_phone"],
@@ -422,7 +483,18 @@ def get_parent_links(
 
         return {
             "success": True,
+            # Retain the pre-pagination response field for deployed clients.
+            "total": total,
             "data": links,
+
+            "summary": {
+                "total_links":
+                    summary_row["total_links"] or 0,
+                "parents_linked":
+                    summary_row["parents_linked"] or 0,
+                "students_linked":
+                    summary_row["students_linked"] or 0,
+            },
 
             "pagination": {
                 "page": page,

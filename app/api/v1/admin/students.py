@@ -86,15 +86,15 @@ def get_students(
     class_id: int | None = Query(default=None),
     is_active: bool | None = Query(default=None),
 
-    page: int = Query(
-        default=1,
+    page: int | None = Query(
+        default=None,
         ge=1,
     ),
 
-    page_size: int = Query(
-        default=25,
+    page_size: int | None = Query(
+        default=None,
         ge=1,
-        le=100,
+        le=5000,
     ),
 
     db: Session = Depends(get_db),
@@ -163,13 +163,22 @@ def get_students(
         # PAGINATION
         # -----------------------------------------
 
+        # Listing screens send page/page_size explicitly. Older dropdown
+        # consumers do not, and historically received every student.
+        effective_page = page or 1
+        effective_page_size = (
+            page_size
+            if page_size is not None
+            else (25 if page is not None else max(total, 1))
+        )
+
         offset = (
-            page - 1
-        ) * page_size
+            effective_page - 1
+        ) * effective_page_size
 
         query_params = {
             **params,
-            "limit": page_size,
+            "limit": effective_page_size,
             "offset": offset,
         }
 
@@ -247,21 +256,23 @@ def get_students(
             )
 
         total_pages = (
-            (total + page_size - 1)
-            // page_size
+            (total + effective_page_size - 1)
+            // effective_page_size
         )
 
         return {
             "success": True,
+            # Keep compatibility with clients deployed before pagination.
+            "total": total,
             "data": students,
 
             "pagination": {
-                "page": page,
-                "page_size": page_size,
+                "page": effective_page,
+                "page_size": effective_page_size,
                 "total": total,
                 "total_pages": total_pages,
-                "has_next": page < total_pages,
-                "has_previous": page > 1,
+                "has_next": effective_page < total_pages,
+                "has_previous": effective_page > 1,
             },
         }
 
