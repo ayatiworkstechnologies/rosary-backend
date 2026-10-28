@@ -551,3 +551,103 @@ def update_class_status(
                 "Failed to update class status"
             ),
         )
+
+
+# -------------------------------------------------------
+# DELETE CLASS - ONLY WHEN NO RELATED RECORDS EXIST
+# -------------------------------------------------------
+
+@router.delete("/{class_id}")
+def delete_class(
+    class_id: int,
+    db: Session = Depends(get_db),
+):
+    dependency_tables = [
+        "students",
+        "teacher_classes",
+        "attendance",
+        "homework",
+        "exam_schedules",
+        "circulars",
+        "school_events",
+        "download_forms",
+        "student_results",
+    ]
+
+    try:
+        # Check whether the class exists.
+        existing = db.execute(
+            text(
+                """
+                SELECT id, name, section
+                FROM school_classes
+                WHERE id = :class_id
+                """
+            ),
+            {"class_id": class_id},
+        ).mappings().first()
+
+        if not existing:
+            raise HTTPException(
+                status_code=404,
+                detail="Class not found.",
+            )
+
+        # Block deletion if any related records exist.
+        for table_name in dependency_tables:
+            count = db.execute(
+                text(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM `{table_name}`
+                    WHERE class_id = :class_id
+                    """
+                ),
+                {"class_id": class_id},
+            ).scalar() or 0
+
+            if count > 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Cannot delete this class because "
+                        f"it has {count} linked record(s) "
+                        f"in {table_name}. "
+                        "Deactivate the class instead."
+                    ),
+                )
+
+        # Delete only after all dependency checks pass.
+        result = db.execute(
+            text(
+                """
+                DELETE FROM school_classes
+                WHERE id = :class_id
+                """
+            ),
+            {"class_id": class_id},
+        )
+
+        db.commit()
+
+        if result.rowcount == 0:
+            raise HTTPException(
+                status_code=404,
+                detail="Class not found.",
+            )
+
+        return {
+            "success": True,
+            "message": "Class deleted successfully.",
+        }
+
+    except HTTPException:
+        db.rollback()
+        raise
+
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to delete class.",
+        )

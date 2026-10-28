@@ -1,7 +1,5 @@
 from datetime import date
-from datetime import date
-from fastapi import Query
-from sqlalchemy import or_
+
 from fastapi import (
     APIRouter,
     Depends,
@@ -10,6 +8,7 @@ from fastapi import (
     status,
 )
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -53,9 +52,12 @@ from app.schemas.teacher import (
     TeacherStudentListResponse,
 )
 from app.schemas.teacher_profile import TeacherProfileResponse
+from app.schemas.teacher_exam_schedule import (
+    TeacherExamScheduleCreate,
+    TeacherExamScheduleUpdate,
+)
 
 from app.services.notification_service import create_notification
-from fastapi import APIRouter, Depends, HTTPException, status, Query
 
 router = APIRouter(
     prefix="/api/v1/teacher",
@@ -120,7 +122,7 @@ def get_class_results(
     # VERIFY TEACHER CLASS ASSIGNMENT
     # -----------------------------------------------------
 
-    teacher_class = (
+    teacher_assignments = (
         db.query(TeacherClass)
         .filter(
             TeacherClass.teacher_user_id
@@ -128,10 +130,10 @@ def get_class_results(
             TeacherClass.class_id
             == class_id,
         )
-        .first()
+        .all()
     )
 
-    if not teacher_class:
+    if not teacher_assignments:
         raise HTTPException(
             status_code=
                 status.HTTP_403_FORBIDDEN,
@@ -198,11 +200,13 @@ def get_class_results(
             detail="Subject is required",
         )
 
-    assigned_subject = (
-        teacher_class.subject or ""
-    ).strip()
+    assigned_subjects = [
+        assignment.subject.strip()
+        for assignment in teacher_assignments
+        if assignment.subject and assignment.subject.strip()
+    ]
 
-    if not assigned_subject:
+    if not assigned_subjects:
         raise HTTPException(
             status_code=
                 status.HTTP_403_FORBIDDEN,
@@ -212,10 +216,16 @@ def get_class_results(
             ),
         )
 
-    if (
-        clean_subject.casefold()
-        != assigned_subject.casefold()
-    ):
+    assigned_subject = next(
+        (
+            value
+            for value in assigned_subjects
+            if value.casefold() == clean_subject.casefold()
+        ),
+        None,
+    )
+
+    if assigned_subject is None:
         raise HTTPException(
             status_code=
                 status.HTTP_403_FORBIDDEN,
@@ -368,7 +378,7 @@ def save_class_results(
     # VERIFY TEACHER ASSIGNMENT
     # -----------------------------------------------------
 
-    teacher_class = (
+    teacher_assignments = (
         db.query(TeacherClass)
         .filter(
             TeacherClass.teacher_user_id
@@ -376,10 +386,10 @@ def save_class_results(
             TeacherClass.class_id
             == class_id,
         )
-        .first()
+        .all()
     )
 
-    if not teacher_class:
+    if not teacher_assignments:
         raise HTTPException(
             status_code=
                 status.HTTP_403_FORBIDDEN,
@@ -408,7 +418,18 @@ def save_class_results(
                 status.HTTP_404_NOT_FOUND,
             detail="Exam not found",
         )
+    # -----------------------------------------------------
+    # BLOCK EDITING AFTER RESULTS ARE PUBLISHED
+    # -----------------------------------------------------
 
+    if exam.results_published:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Results for this examination are already published. "
+                "Ask the administrator to unpublish the results before editing."
+            ),
+        )
     # -----------------------------------------------------
     # VERIFY SUBJECT
     # -----------------------------------------------------
@@ -424,11 +445,13 @@ def save_class_results(
             detail="Subject is required",
         )
 
-    assigned_subject = (
-        teacher_class.subject or ""
-    ).strip()
+    assigned_subjects = [
+        assignment.subject.strip()
+        for assignment in teacher_assignments
+        if assignment.subject and assignment.subject.strip()
+    ]
 
-    if not assigned_subject:
+    if not assigned_subjects:
         raise HTTPException(
             status_code=
                 status.HTTP_403_FORBIDDEN,
@@ -438,10 +461,16 @@ def save_class_results(
             ),
         )
 
-    if (
-        subject.casefold()
-        != assigned_subject.casefold()
-    ):
+    assigned_subject = next(
+        (
+            value
+            for value in assigned_subjects
+            if value.casefold() == subject.casefold()
+        ),
+        None,
+    )
+
+    if assigned_subject is None:
         raise HTTPException(
             status_code=
                 status.HTTP_403_FORBIDDEN,
@@ -2476,4 +2505,508 @@ def get_teacher_profile(
 
         "assigned_classes":
             assigned_classes,
+    }
+
+
+# =========================================================
+# CREATE TEACHER EXAM SCHEDULE
+# =========================================================
+
+@router.post(
+    "/exam-schedule",
+    status_code=status.HTTP_201_CREATED,
+)
+def create_teacher_exam_schedule(
+    payload: TeacherExamScheduleCreate,
+    db: Session = Depends(get_db),
+    current_teacher: User = Depends(
+        get_current_teacher
+    ),
+):
+    class_id = payload.class_id
+    exam_id = payload.exam_id
+    subject = payload.subject
+    exam_date = payload.exam_date
+    start_time = payload.start_time
+    end_time = payload.end_time
+    room = payload.room
+    instructions = payload.instructions
+
+
+    # -----------------------------------------------------
+    # VERIFY TEACHER CLASS + SUBJECT ASSIGNMENT
+    # -----------------------------------------------------
+
+    teacher_assignment = (
+        db.query(TeacherClass)
+        .filter(
+            TeacherClass.teacher_user_id
+            == current_teacher.id,
+
+            TeacherClass.class_id
+            == class_id,
+        )
+        .all()
+    )
+
+    if not teacher_assignment:
+        raise HTTPException(
+            status_code=
+                status.HTTP_403_FORBIDDEN,
+            detail=(
+                "You are not assigned "
+                "to this class"
+            ),
+        )
+
+
+    assigned_subjects = {
+        (
+            item.subject
+            or ""
+        ).strip().lower()
+        for item in teacher_assignment
+        if item.subject
+    }
+
+    if (
+        subject.lower()
+        not in assigned_subjects
+    ):
+        raise HTTPException(
+            status_code=
+                status.HTTP_403_FORBIDDEN,
+            detail=(
+                "You are not assigned "
+                "to this subject"
+            ),
+        )
+
+
+    # -----------------------------------------------------
+    # VERIFY CLASS
+    # -----------------------------------------------------
+
+    school_class = (
+        db.query(SchoolClass)
+        .filter(
+            SchoolClass.id
+            == class_id,
+
+            SchoolClass.is_active.is_(
+                True
+            ),
+        )
+        .first()
+    )
+
+    if not school_class:
+        raise HTTPException(
+            status_code=
+                status.HTTP_404_NOT_FOUND,
+            detail="Class not found",
+        )
+
+
+    # -----------------------------------------------------
+    # VERIFY EXAM
+    # -----------------------------------------------------
+
+    exam = (
+        db.query(Exam)
+        .filter(
+            Exam.id
+            == exam_id,
+
+            Exam.is_active.is_(
+                True
+            ),
+        )
+        .first()
+    )
+
+    if not exam:
+        raise HTTPException(
+            status_code=
+                status.HTTP_404_NOT_FOUND,
+            detail="Exam not found",
+        )
+
+    if exam.start_date and exam_date < exam.start_date:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Exam date cannot be before the examination start date",
+        )
+
+    if exam.end_date and exam_date > exam.end_date:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Exam date cannot be after the examination end date",
+        )
+
+
+    # -----------------------------------------------------
+    # CHECK DUPLICATE
+    # -----------------------------------------------------
+
+    duplicate = (
+        db.query(ExamSchedule)
+        .filter(
+            ExamSchedule.class_id
+            == class_id,
+
+            ExamSchedule.exam_id
+            == exam_id,
+
+            ExamSchedule.subject
+            == subject,
+        )
+        .first()
+    )
+
+    if duplicate:
+        raise HTTPException(
+            status_code=
+                status.HTTP_409_CONFLICT,
+            detail=(
+                "Schedule already exists "
+                "for this class, exam "
+                "and subject"
+            ),
+        )
+
+
+    # -----------------------------------------------------
+    # CREATE
+    # -----------------------------------------------------
+
+    schedule = ExamSchedule(
+        class_id=class_id,
+        exam_id=exam_id,
+        subject=subject,
+        exam_date=exam_date,
+        start_time=start_time,
+        end_time=end_time,
+        room=room or None,
+        instructions=
+            instructions or None,
+    )
+
+    db.add(schedule)
+    try:
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Schedule already exists for this class, exam, subject, and date"
+            ),
+        ) from error
+    db.refresh(schedule)
+
+    return {
+        "id": schedule.id,
+
+        "class_id":
+            schedule.class_id,
+
+        "exam_id":
+            schedule.exam_id,
+
+        "subject":
+            schedule.subject,
+
+        "exam_date":
+            str(
+                schedule.exam_date
+            ),
+
+        "start_time":
+            str(
+                schedule.start_time
+            ),
+
+        "end_time":
+            str(
+                schedule.end_time
+            ),
+
+        "room":
+            schedule.room,
+
+        "instructions":
+            schedule.instructions,
+
+        "message":
+            "Exam schedule created successfully",
+    }
+
+
+# =========================================================
+# UPDATE TEACHER EXAM SCHEDULE
+# =========================================================
+
+@router.put(
+    "/exam-schedule/{schedule_id}",
+)
+def update_teacher_exam_schedule(
+    schedule_id: int,
+    payload: TeacherExamScheduleUpdate,
+    db: Session = Depends(get_db),
+    current_teacher: User = Depends(
+        get_current_teacher
+    ),
+):
+    schedule = (
+        db.query(ExamSchedule)
+        .filter(
+            ExamSchedule.id
+            == schedule_id
+        )
+        .first()
+    )
+
+    if not schedule:
+        raise HTTPException(
+            status_code=
+                status.HTTP_404_NOT_FOUND,
+            detail=(
+                "Exam schedule not found"
+            ),
+        )
+
+
+    # -----------------------------------------------------
+    # VERIFY TEACHER OWNS CLASS + SUBJECT
+    # -----------------------------------------------------
+
+    assignment = (
+        db.query(TeacherClass)
+        .filter(
+            TeacherClass.teacher_user_id
+            == current_teacher.id,
+
+            TeacherClass.class_id
+            == schedule.class_id,
+        )
+        .all()
+    )
+
+    if not assignment:
+        raise HTTPException(
+            status_code=
+                status.HTTP_403_FORBIDDEN,
+            detail=(
+                "You cannot edit "
+                "this schedule"
+            ),
+        )
+
+
+    assigned_subjects = {
+        (
+            item.subject
+            or ""
+        ).strip().lower()
+        for item in assignment
+        if item.subject
+    }
+
+    if (
+        (
+            schedule.subject
+            or ""
+        ).strip().lower()
+        not in assigned_subjects
+    ):
+        raise HTTPException(
+            status_code=
+                status.HTTP_403_FORBIDDEN,
+            detail=(
+                "You cannot edit "
+                "another teacher's subject"
+            ),
+        )
+
+
+    # -----------------------------------------------------
+    # UPDATE ALLOWED VALUES
+    # -----------------------------------------------------
+
+    updates = payload.model_dump(
+        exclude_unset=True
+    )
+
+    proposed_start = updates.get(
+        "start_time",
+        schedule.start_time,
+    )
+    proposed_end = updates.get(
+        "end_time",
+        schedule.end_time,
+    )
+
+    if proposed_end <= proposed_start:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="End time must be after start time",
+        )
+
+    if "exam_date" in updates:
+        exam = (
+            db.query(Exam)
+            .filter(Exam.id == schedule.exam_id)
+            .first()
+        )
+        proposed_date = updates["exam_date"]
+
+        if exam and exam.start_date and proposed_date < exam.start_date:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Exam date cannot be before the examination start date"
+                ),
+            )
+
+        if exam and exam.end_date and proposed_date > exam.end_date:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Exam date cannot be after the examination end date"
+                ),
+            )
+
+    for field, value in updates.items():
+        setattr(schedule, field, value)
+
+    db.commit()
+    db.refresh(schedule)
+
+    return {
+        "id": schedule.id,
+
+        "class_id":
+            schedule.class_id,
+
+        "exam_id":
+            schedule.exam_id,
+
+        "subject":
+            schedule.subject,
+
+        "exam_date":
+            str(
+                schedule.exam_date
+            ),
+
+        "start_time":
+            str(
+                schedule.start_time
+            ),
+
+        "end_time":
+            str(
+                schedule.end_time
+            ),
+
+        "room":
+            schedule.room,
+
+        "instructions":
+            schedule.instructions,
+
+        "message":
+            "Exam schedule updated successfully",
+    }
+
+
+# =========================================================
+# DELETE TEACHER EXAM SCHEDULE
+# =========================================================
+
+@router.delete(
+    "/exam-schedule/{schedule_id}",
+)
+def delete_teacher_exam_schedule(
+    schedule_id: int,
+    db: Session = Depends(get_db),
+    current_teacher: User = Depends(
+        get_current_teacher
+    ),
+):
+    schedule = (
+        db.query(ExamSchedule)
+        .filter(
+            ExamSchedule.id
+            == schedule_id
+        )
+        .first()
+    )
+
+    if not schedule:
+        raise HTTPException(
+            status_code=
+                status.HTTP_404_NOT_FOUND,
+            detail=(
+                "Exam schedule not found"
+            ),
+        )
+
+
+    assignment = (
+        db.query(TeacherClass)
+        .filter(
+            TeacherClass.teacher_user_id
+            == current_teacher.id,
+
+            TeacherClass.class_id
+            == schedule.class_id,
+        )
+        .all()
+    )
+
+    if not assignment:
+        raise HTTPException(
+            status_code=
+                status.HTTP_403_FORBIDDEN,
+            detail=(
+                "You cannot delete "
+                "this schedule"
+            ),
+        )
+
+
+    assigned_subjects = {
+        (
+            item.subject
+            or ""
+        ).strip().lower()
+        for item in assignment
+        if item.subject
+    }
+
+    if (
+        (
+            schedule.subject
+            or ""
+        ).strip().lower()
+        not in assigned_subjects
+    ):
+        raise HTTPException(
+            status_code=
+                status.HTTP_403_FORBIDDEN,
+            detail=(
+                "You cannot delete "
+                "another teacher's subject"
+            ),
+        )
+
+
+    db.delete(schedule)
+    db.commit()
+
+    return {
+        "message":
+            "Exam schedule deleted successfully"
     }
