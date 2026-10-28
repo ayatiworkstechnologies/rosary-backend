@@ -2,6 +2,9 @@ venv/
 .venv/
 __pycache__/
 *.pyc
+*.bak
+*.bak_*
+*.save
 
 .env
 .env.*
