@@ -1,7 +1,7 @@
 import logging
 import os
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -9,14 +9,13 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.database import Base, engine
+from app.dependencies import get_current_admin
 
 import app.models
 
 from app.routes.auth import router as auth_router
 from app.routes.teacher import router as teacher_router
 from app.routes.parent import router as parent_router
-from app.routes.notifications import router as notifications_router
-
 from app.routes.notifications import router as notifications_router
 from app.routes.admin_notifications import router as admin_notifications_router
 
@@ -197,15 +196,18 @@ app.include_router(admin_notifications_router)
 
 app.include_router(
     admin_dashboard_router,
-    prefix="/api/v1"
+    prefix="/api/v1",
+    dependencies=[Depends(get_current_admin)],
 )
 app.include_router(
     admin_classes_router,
     prefix="/api/v1",
+    dependencies=[Depends(get_current_admin)],
 )
 app.include_router(
     admin_students_router,
     prefix="/api/v1",
+    dependencies=[Depends(get_current_admin)],
 )
 app.include_router(
     admin_parent_links_router,
@@ -214,29 +216,38 @@ app.include_router(
 app.include_router(
     admin_teachers_router,
     prefix="/api/v1",
+    dependencies=[Depends(get_current_admin)],
 )
 
 app.include_router(
     admin_circulars_router,
     prefix="/api/v1",
+    dependencies=[Depends(get_current_admin)],
 )
 app.include_router(
     admin_school_events_router,
     prefix="/api/v1",
+    dependencies=[Depends(get_current_admin)],
 )
 app.include_router(
     admin_fees_router,
     prefix="/api/v1",
+    dependencies=[Depends(get_current_admin)],
 )
-app.include_router(admin_downloads_router)
 app.include_router(
-    admin_exams_router
+    admin_downloads_router,
+    dependencies=[Depends(get_current_admin)],
+)
+app.include_router(
+    admin_exams_router,
+    dependencies=[Depends(get_current_admin)],
 )
 app.include_router(
     admin_results_router
 )
 app.include_router(
-    admin_exam_schedules_router
+    admin_exam_schedules_router,
+    dependencies=[Depends(get_current_admin)],
 )
 app.include_router(
     admin_users_router
@@ -244,5 +255,6 @@ app.include_router(
 app.include_router(
     admin_parents_router,
     prefix="/api/v1",
+    dependencies=[Depends(get_current_admin)],
 )
 
