@@ -30,7 +30,7 @@ jobs:
 
       - name: Check Python syntax
         run: |
-          python -m compileall -q app
+          python -m compileall -q app tests
 
       - name: Run regression tests
         run: |

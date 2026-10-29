@@ -169,7 +169,7 @@ class TeacherWorkflowTests(ApiTestBase):
 
         # teacher cannot create homework for an unassigned class
         other = self.post(
-            f"/api/v1/teacher/classes/{self.ids["class_b"]}/homework",
+            f"/api/v1/teacher/classes/{self.ids['class_b']}/homework",
             tid,
             json={"subject": "Science", "title": "X", "assigned_date": date.today().isoformat(),
                   "due_date": (date.today() + timedelta(days=1)).isoformat()},
@@ -269,7 +269,7 @@ class TeacherWorkflowTests(ApiTestBase):
 
         # class of another teacher
         other_class = self.post(
-            f"/api/v1/teacher/classes/{self.ids["class_b"]}/results",
+            f"/api/v1/teacher/classes/{self.ids['class_b']}/results",
             tid,
             json={"exam_id": eid, "subject": "Mathematics", "results": [
                 {"student_id": self.ids["s3"], "max_marks": 100, "obtained_marks": 10},
@@ -319,7 +319,7 @@ class TeacherWorkflowTests(ApiTestBase):
         self.assertIn(delete.status_code, (200, 204))
 
         gone = self.get("/api/v1/teacher/exam-schedule?class_id="
-                        f"{self.ids["class_a"]}", tid)
+                        f"{self.ids['class_a']}", tid)
         self.assertEqual(gone.status_code, 200)
 
     # -------------------------------------------------
