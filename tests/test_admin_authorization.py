@@ -1,3 +1,4 @@
+import tests._env  # noqa: F401  (isolates the test database - keep first)
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
