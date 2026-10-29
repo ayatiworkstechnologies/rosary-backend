@@ -6,9 +6,17 @@ database configured in ``.env`` (which may be production MySQL).
 """
 import os
 
-os.environ["DATABASE_URL"] = "sqlite+pysqlite:///:memory:"
-os.environ["SECRET_KEY"] = "test-secret-key-that-is-at-least-32-bytes"
-os.environ["ALGORITHM"] = "HS256"
+# An explicitly provided DATABASE_URL pointing at the dedicated MySQL test
+# database (set from the DBA-prepared env file) is honored. Anything else -
+# including the production URL that load_dotenv() may pick up from .env -
+# is replaced with the isolated in-memory SQLite database.
+_EXISTING_URL = os.environ.get("DATABASE_URL", "")
+
+if "rosary_portal_test" not in _EXISTING_URL:
+    os.environ["DATABASE_URL"] = "sqlite+pysqlite:///:memory:"
+
+os.environ.setdefault("SECRET_KEY", "test-secret-key-that-is-at-least-32-bytes")
+os.environ.setdefault("ALGORITHM", "HS256")
 
 
 def _assert_isolated():
