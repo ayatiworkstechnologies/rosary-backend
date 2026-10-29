@@ -23,3 +23,4 @@ scripts/real_data/input/
 /reset_admin_password.py
 /teacher_notification_backup.py
 uploads/
+e2e_data/

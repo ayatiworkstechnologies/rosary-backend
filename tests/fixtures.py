@@ -91,11 +91,17 @@ def seed(db):
     ])
 
     today = date.today()
+    # The exam window must cover dates the E2E/UI tests can schedule;
+    # a fixed past-dated window would expire as calendar days pass.
     exam = Exam(name="TESTEXAM", academic_year="2026-2027",
                 start_date=today - timedelta(days=7),
-                end_date=today - timedelta(days=1),
+                end_date=today + timedelta(days=30),
                 is_active=True, results_published=False)
-    db.add(exam)
+    exam2 = Exam(name="TESTEXAM2", academic_year="2026-2027",
+                 start_date=today - timedelta(days=7),
+                 end_date=today + timedelta(days=30),
+                 is_active=True, results_published=False)
+    db.add_all([exam, exam2])
     db.flush()
 
     db.add_all([
@@ -122,6 +128,7 @@ def seed(db):
         "parent": parent.id, "other_parent": other_parent.id,
         "class_a": class_a.id, "class_b": class_b.id,
         "s1": s1.id, "s2": s2.id, "s3": s3.id, "exam": exam.id,
+        "exam2": exam2.id,
     }
 
 
