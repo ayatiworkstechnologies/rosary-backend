@@ -6,6 +6,8 @@ Nothing in this module reads from or writes to production data.
 import os
 from datetime import date, time as _time, timedelta
 
+import tests._env  # noqa: F401  (isolate DB before importing any app modules)
+
 from app.core.security import hash_password
 from app.database import Base, engine, SessionLocal
 
