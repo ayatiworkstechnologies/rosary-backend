@@ -12,6 +12,10 @@ from app.models.exam import Exam
 from app.models.exam_schedule import ExamSchedule
 from app.models.student_result import StudentResult
 
+from app.services.notification_service import (
+    notify_teachers_of_class,
+)
+
 from app.schemas.admin_exam import (
     AdminExamCreate,
     AdminExamResponse,
@@ -473,9 +477,44 @@ def update_admin_exam_results_publish_status(
     # UPDATE PUBLISH STATUS
     # -----------------------------------------------------
 
+    was_published = exam.results_published
+
     exam.results_published = (
         payload.results_published
     )
+
+    # Only notify teachers when results actually become published
+    # (unpublishing is an admin correction, not news).
+    if payload.results_published and not was_published:
+        scheduled_class_ids = (
+            db.query(
+                ExamSchedule.class_id
+            )
+            .filter(
+                ExamSchedule.exam_id
+                == exam_id,
+            )
+            .distinct()
+            .all()
+        )
+
+        for (
+            class_id,
+        ) in scheduled_class_ids:
+            notify_teachers_of_class(
+                db=db,
+                class_id=class_id,
+                title="Results Published",
+                message=(
+                    f"Results for {exam.name} "
+                    "have been published."
+                ),
+                notification_type=(
+                    "RESULTS_PUBLISHED"
+                ),
+                reference_id=exam.id,
+                link=None,
+            )
 
     db.commit()
     db.refresh(exam)

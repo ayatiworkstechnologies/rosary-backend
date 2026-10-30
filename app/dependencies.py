@@ -106,3 +106,21 @@ def get_current_admin(
         )
 
     return current_user
+
+
+def get_current_staff(
+    current_user: User = Depends(get_current_user),
+):
+    """Allow TEACHER and ADMIN users only.
+
+    Used by the staff notification inbox. Every notification row is
+    scoped to the recipient's own user_id, so this only ever exposes
+    the caller's own inbox - never another user's.
+    """
+    if current_user.role.upper() not in ("TEACHER", "ADMIN"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Staff access required",
+        )
+
+    return current_user

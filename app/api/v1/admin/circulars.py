@@ -11,6 +11,10 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 
+from app.services.notification_service import (
+    notify_all_teachers,
+)
+
 from app.schemas.admin_circular import (
     AdminCircularCreate,
     AdminCircularUpdate,
@@ -673,6 +677,19 @@ def create_admin_circular(
         circular_id = (
             result.lastrowid
         )
+
+        # Teachers follow circulars addressed to them or to all.
+        # Emitted inside the same transaction and never allowed to
+        # fail the circular creation.
+        if audience in ("ALL", "TEACHER"):
+            notify_all_teachers(
+                db=db,
+                title="New Circular",
+                message=title,
+                notification_type="CIRCULAR",
+                reference_id=circular_id,
+                link="/teacher/circulars",
+            )
 
         db.commit()
 

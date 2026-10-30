@@ -857,8 +857,8 @@ def create_admin_fee(
                     :payment_mode,
                     :remarks,
                     :is_active,
-                    NOW(),
-                    NOW()
+                    CURRENT_TIMESTAMP,
+                    CURRENT_TIMESTAMP
                 )
                 """
             ),
@@ -883,10 +883,10 @@ def create_admin_fee(
                     .upper(),
 
                 "amount":
-                    amount,
+                    str(amount),
 
                 "paid_amount":
-                    paid_amount,
+                    str(paid_amount),
 
                 "due_date":
                     payload.due_date,
@@ -1044,7 +1044,7 @@ def update_admin_fee(
                         :remarks,
 
                     updated_at =
-                        NOW()
+                        CURRENT_TIMESTAMP
 
                 WHERE id =
                     :fee_id
@@ -1071,7 +1071,7 @@ def update_admin_fee(
                     .upper(),
 
                 "amount":
-                    new_amount,
+                    str(new_amount),
 
                 "due_date":
                     payload.due_date,
@@ -1214,7 +1214,7 @@ def update_admin_fee_payment(
                         :remarks,
 
                     updated_at =
-                        NOW()
+                        CURRENT_TIMESTAMP
 
                 WHERE id =
                     :fee_id
@@ -1222,7 +1222,7 @@ def update_admin_fee_payment(
             ),
             {
                 "paid_amount":
-                    paid_amount,
+                    str(paid_amount),
 
                 "paid_date":
                     paid_date,
@@ -1325,7 +1325,7 @@ def update_admin_fee_status(
                         :is_active,
 
                     updated_at =
-                        NOW()
+                        CURRENT_TIMESTAMP
 
                 WHERE id =
                     :fee_id
