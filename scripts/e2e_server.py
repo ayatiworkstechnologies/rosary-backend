@@ -25,7 +25,7 @@ FRONTEND_ROOT = BACKEND_ROOT.parent / "rosary-frontend"
 
 DB_PATH = Path(os.environ.get(
     "E2E_DB_PATH",
-    BACKEND_ROOT / "e2e_data" / "rosary_e2e.db",
+    BACKEND_ROOT / "e2e_data" / "rosary_portal_test_e2e.db",
 ))
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 

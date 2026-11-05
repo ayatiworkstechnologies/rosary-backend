@@ -676,6 +676,43 @@ def save_class_results(
 
             db.add(result)
 
+    # Notify administrators that this teacher submitted marks for
+    # a class/exam, so they know what is ready for publishing.
+    # Side effect must never fail the save itself.
+    from app.services.notification_service import (
+        notify_all_admins,
+    )
+
+    school_class = (
+        db.query(SchoolClass)
+        .filter(
+            SchoolClass.id == class_id,
+        )
+        .first()
+    )
+
+    class_label = (
+        f"{school_class.name}-"
+        f"{school_class.section}"
+        if school_class
+        else f"class #{class_id}"
+    )
+
+    notify_all_admins(
+        db=db,
+        title="Results Submitted",
+        message=(
+            f"{current_teacher.name} submitted "
+            f"{subject} results for {class_label} "
+            f"in {exam.name}."
+        ),
+        notification_type=(
+            "RESULT_SUBMISSION"
+        ),
+        reference_id=payload.exam_id,
+        link=None,
+    )
+
     db.commit()
 
     return {

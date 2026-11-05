@@ -13,6 +13,10 @@ from app.models.exam import Exam
 from app.models.exam_schedule import ExamSchedule
 from app.models.school_class import SchoolClass
 
+from app.services.notification_service import (
+    notify_teachers_of_class,
+)
+
 from app.schemas.admin_exam_schedule import (
     AdminExamScheduleCreate,
     AdminExamScheduleResponse,
@@ -361,6 +365,24 @@ def create_exam_schedule(
     )
 
     db.add(schedule)
+    db.flush()
+
+    # Notify teachers assigned to this class about the new schedule.
+    # Generated inside the same transaction; never fails the action.
+    notify_teachers_of_class(
+        db=db,
+        class_id=school_class.id,
+        title="New Exam Schedule",
+        message=(
+            f"{exam.name}: {subject} exam for "
+            f"{school_class.name}-{school_class.section} "
+            f"is scheduled on {schedule.exam_date}."
+        ),
+        notification_type="EXAM_SCHEDULE",
+        reference_id=schedule.id,
+        link=None,
+    )
+
     db.commit()
     db.refresh(schedule)
 

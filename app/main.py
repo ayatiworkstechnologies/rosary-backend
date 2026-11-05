@@ -18,6 +18,7 @@ from app.routes.teacher import router as teacher_router
 from app.routes.parent import router as parent_router
 from app.routes.notifications import router as notifications_router
 from app.routes.admin_notifications import router as admin_notifications_router
+from app.routes.staff_notifications import router as staff_notifications_router
 
 from app.api.v1.admin.dashboard import router as admin_dashboard_router
 from app.api.v1.admin.classes import (
@@ -193,6 +194,7 @@ app.include_router(teacher_router)
 app.include_router(parent_router)
 app.include_router(notifications_router)
 app.include_router(admin_notifications_router)
+app.include_router(staff_notifications_router)
 
 app.include_router(
     admin_dashboard_router,
