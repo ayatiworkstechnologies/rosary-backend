@@ -1,14 +1,14 @@
 import logging
 import os
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.database import Base, engine
+from app.database import engine
 from app.dependencies import get_current_admin
 
 import app.models
@@ -66,13 +66,6 @@ from app.api.v1.admin.parents import (
 logging.basicConfig(level=logging.INFO)
 
 logger = logging.getLogger(__name__)
-
-
-# =========================================================
-# CREATE DATABASE TABLES
-# =========================================================
-
-Base.metadata.create_all(bind=engine)
 
 
 # =========================================================
@@ -178,11 +171,10 @@ def health():
             "Database health check failed"
         )
 
-        return {
-            "status": "unhealthy",
-            "database": "disconnected",
-            "error": str(error),
-        }
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database unavailable",
+        ) from error
 
 
 # =========================================================

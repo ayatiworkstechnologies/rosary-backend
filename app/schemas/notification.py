@@ -1,10 +1,12 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class NotificationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     user_id: int
     title: str
@@ -15,8 +17,6 @@ class NotificationResponse(BaseModel):
     is_read: bool
     created_at: datetime
 
-    class Config:
-        from_attributes = True
 
 class NotificationListResponse(BaseModel):
     data: list[NotificationResponse]
@@ -27,4 +27,3 @@ class NotificationListResponse(BaseModel):
     total_pages: int
     has_next: bool
     has_previous: bool
-    

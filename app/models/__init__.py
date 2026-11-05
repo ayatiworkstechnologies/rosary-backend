@@ -21,18 +21,6 @@
 # instead of manually importing every model one by one.
 # =========================================================
 
-from app.database import (
-    Base,
-    SessionLocal,
-    engine,
-)
-
-import app.models
-
-
-Base.metadata.create_all(
-    bind=engine
-)
 from app.models.user import User
 
 from app.models.school_class import SchoolClass
@@ -82,6 +70,6 @@ __all__ = [
     "TeacherProfile",
     "ParentStudent",
     "StudentFee",
-    "DownloadForm", 
+    "DownloadForm",
     "ParentProfile",
 ]
