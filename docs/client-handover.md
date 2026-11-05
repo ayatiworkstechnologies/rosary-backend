@@ -75,6 +75,8 @@ Safe correction procedure:
 5. Re-run orphan, duplicate, unlinked, and sibling-count checks; then test one school-designated account.
 
 Do not infer a relationship from names, phone numbers, row order, or an inactive account alone.
+Use [parent-linking-reconciliation.md](parent-linking-reconciliation.md) for the
+verified aggregate and secure school mapping template.
 
 ## 8. Attendance and homework
 
