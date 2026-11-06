@@ -46,4 +46,6 @@ The test suite replaces ordinary database configuration with isolated SQLite. A 
 
 Application startup does not create or modify database tables. Schema changes must be represented by Alembic migrations and applied explicitly.
 
-See [docs/deployment.md](docs/deployment.md) for release and rollback steps.
+See [docs/deployment.md](docs/deployment.md) for release and rollback steps and
+[docs/client-handover.md](docs/client-handover.md) for the operations and user
+handover guide.
