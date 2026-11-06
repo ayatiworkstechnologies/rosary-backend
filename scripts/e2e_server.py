@@ -20,8 +20,14 @@ import os
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 FRONTEND_ROOT = BACKEND_ROOT.parent / "rosary-frontend"
+
+# Optional, gitignored developer overrides such as E2E_PARENT_EMAIL. This is
+# loaded only by the disposable local E2E server, never by production.
+load_dotenv(BACKEND_ROOT / ".env.e2e.local", override=False)
 
 DB_PATH = Path(os.environ.get(
     "E2E_DB_PATH",

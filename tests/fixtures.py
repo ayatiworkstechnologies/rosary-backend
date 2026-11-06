@@ -43,10 +43,13 @@ def seed(db):
     from app.models.school_event import SchoolEvent
 
     def user(name, username, role, pw):
+        email = f"{username.lower()}@example.com"
+        if username == "PAR_TEST":
+            email = os.environ.get("E2E_PARENT_EMAIL", email).strip() or email
         u = User(
             name=name,
             username=username,
-            email=f"{username.lower()}@example.com",
+            email=email,
             email_verified_at=(
                 datetime.now(timezone.utc) if role == "PARENT" else None
             ),
