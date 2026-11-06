@@ -17,6 +17,11 @@ if "rosary_portal_test" not in _EXISTING_URL:
 
 os.environ.setdefault("SECRET_KEY", "test-secret-key-that-is-at-least-32-bytes")
 os.environ.setdefault("ALGORITHM", "HS256")
+os.environ.setdefault("EMAIL_NOTIFICATIONS_ENABLED", "true")
+os.environ.setdefault("EMAIL_TRANSPORT", "mock")
+os.environ.setdefault("SMTP_FROM_EMAIL", "no-reply@example.com")
+os.environ.setdefault("EMAIL_RATE_LIMIT_PER_SECOND", "0")
+os.environ.setdefault("EMAIL_RETRY_BASE_SECONDS", "1")
 
 
 def _assert_isolated():

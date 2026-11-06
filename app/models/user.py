@@ -28,6 +28,21 @@ class User(Base):
         nullable=True
     )
 
+    # Parent email delivery is deliberately disabled until the address has
+    # been verified and the school's lawful-basis / preference workflow has
+    # enabled notifications for this account.
+    email_verified_at = Column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    email_notifications_enabled = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="0",
+    )
+
     password_hash = Column(
         String(255),
         nullable=False

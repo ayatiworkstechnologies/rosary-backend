@@ -39,6 +39,14 @@ os.environ.setdefault(
     "SECRET_KEY", "e2e-only-secret-key-that-is-at-least-32-bytes-long"
 )
 os.environ.setdefault("ALGORITHM", "HS256")
+# Email tests must never contact a real provider. The feature is enabled so
+# browser tests can exercise previews and queue creation; the worker is not
+# started by this server and the only permitted transport is the in-memory
+# mock.
+os.environ["EMAIL_NOTIFICATIONS_ENABLED"] = "true"
+os.environ["EMAIL_TRANSPORT"] = "mock"
+os.environ["SMTP_FROM_EMAIL"] = "school@example.com"
+os.environ["EMAIL_RATE_LIMIT_PER_SECOND"] = "0"
 
 # Recreate a fresh database on every boot so tests always start
 # from a known state.

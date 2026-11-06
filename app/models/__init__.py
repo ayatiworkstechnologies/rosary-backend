@@ -51,6 +51,7 @@ from app.models.download_form import DownloadForm
 from app.models.parent_profile import ParentProfile
 
 from app.models.notification import Notification
+from app.models.email_notification import EmailNotificationBatch, EmailDelivery
 # =========================================================
 # OPTIONAL EXPORT LIST
 # =========================================================
@@ -72,4 +73,7 @@ __all__ = [
     "StudentFee",
     "DownloadForm",
     "ParentProfile",
+    "Notification",
+    "EmailNotificationBatch",
+    "EmailDelivery",
 ]

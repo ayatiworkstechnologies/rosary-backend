@@ -4,7 +4,7 @@ Every record created here is fully synthetic (TEST_* / TESTADM* identifiers).
 Nothing in this module reads from or writes to production data.
 """
 import os
-from datetime import date, time as _time, timedelta
+from datetime import date, datetime, time as _time, timedelta, timezone
 
 import tests._env  # noqa: F401  (isolate DB before importing any app modules)
 
@@ -43,8 +43,18 @@ def seed(db):
     from app.models.school_event import SchoolEvent
 
     def user(name, username, role, pw):
-        u = User(name=name, username=username, email=f"{username.lower()}@test.local",
-                 password_hash=hash_password(pw), role=role, is_active=True)
+        u = User(
+            name=name,
+            username=username,
+            email=f"{username.lower()}@example.com",
+            email_verified_at=(
+                datetime.now(timezone.utc) if role == "PARENT" else None
+            ),
+            email_notifications_enabled=(role == "PARENT"),
+            password_hash=hash_password(pw),
+            role=role,
+            is_active=True,
+        )
         db.add(u)
         db.flush()
         return u
