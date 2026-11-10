@@ -12,10 +12,12 @@ resolves linked parent accounts, validates and normalizes their addresses,
 deduplicates by normalized email, and writes a durable database outbox.
 
 `python -m app.workers.email_delivery_worker` processes that outbox. API
-requests never contact SMTP directly. A failed provider call is retried with
-exponential backoff, and final failures remain visible in Admin delivery
-history. Run one continuously supervised worker, or invoke `--once` from a
-scheduled job.
+notification requests never contact SMTP directly. A failed provider call is
+retried with exponential backoff, and final failures remain visible in Admin
+delivery history. The authenticated verification-request endpoint sends its
+single transactional message immediately so the parent receives a clear
+success or failure result. Run one continuously supervised worker, or invoke
+`--once` from a scheduled job.
 
 ## Required environment variables
 
@@ -29,6 +31,7 @@ Names only; secrets must remain in the server secret store:
 - `SMTP_PASSWORD`
 - `SMTP_FROM_EMAIL`
 - `SMTP_FROM_NAME`
+- `SMTP_MESSAGE_ID_DOMAIN`
 - `SMTP_USE_TLS`
 - `SMTP_USE_SSL`
 - `EMAIL_BATCH_SIZE`
@@ -39,14 +42,33 @@ Names only; secrets must remain in the server secret store:
 - `EMAIL_PROCESSING_TIMEOUT_SECONDS`
 - `EMAIL_FEE_REMINDERS_ENABLED`
 - `SCHOOL_PORTAL_URL`
+- `PUBLIC_API_URL` (public HTTPS API origin used by one-click unsubscribe)
+- `EMAIL_VERIFICATION_EXPIRE_HOURS` (defaults to `24`)
+
+## Parent preference API
+
+- `GET /api/v1/parent/email-preferences` returns the authenticated parent's
+  current verification and opt-in state.
+- `PATCH /api/v1/parent/email-preferences` enables or disables email. Enabling
+  requires a verified address; disabling is always allowed.
+- `POST /api/v1/parent/email-preferences/verification/request` sends a new
+  one-time verification link to the authenticated parent's saved address.
+- `POST /api/v1/parent/email-preferences/verification/confirm` consumes the
+  raw token in a JSON body. The parent must then opt in with the preference
+  endpoint; verification alone does not enable notifications.
+- `POST /api/v1/parent/email-preferences/unsubscribe?token=...` is the public,
+  signed, idempotent one-click opt-out endpoint used in notification headers.
+
+Only SHA-256 token digests are stored. Verification links expire and are
+single-use. Unsubscribe tokens are bound to the current address, so changing a
+parent email invalidates old links and clears verification and opt-in state.
 
 ## Production activation checklist
 
 1. Obtain written school approval for the message types and lawful basis.
-2. Verify parent addresses and set `users.email_verified_at` only from an
-   authoritative process.
-3. Set `users.email_notifications_enabled` from an approved preference or
-   documented lawful-basis process. New/existing accounts default to disabled.
+2. Verify parent addresses through the one-time verification API.
+3. Record explicit opt-in through the preference API. New/existing accounts
+   default to disabled.
 4. Configure the approved SMTP provider and a dedicated sender address.
 5. Publish and verify SPF, DKIM and DMARC for the sender domain.
 6. Keep `EMAIL_FEE_REMINDERS_ENABLED=false` until separately authorized.

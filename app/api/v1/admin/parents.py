@@ -960,6 +960,14 @@ def update_admin_parent(
                 SET
                     name = :name,
                     username = :username,
+                    email_verified_at = CASE
+                        WHEN COALESCE(email, '') != COALESCE(:email, '') THEN NULL
+                        ELSE email_verified_at
+                    END,
+                    email_notifications_enabled = CASE
+                        WHEN COALESCE(email, '') != COALESCE(:email, '') THEN 0
+                        ELSE email_notifications_enabled
+                    END,
                     email = :email
 
                 WHERE id = :user_id

@@ -572,6 +572,11 @@ def update_admin_user(
                     ),
                 )
 
+        if user.role.upper() == "PARENT" and user.email != email:
+            # Verification belongs to a specific address, not merely to the
+            # account. A replacement address must opt in and verify again.
+            user.email_verified_at = None
+            user.email_notifications_enabled = False
         user.email = email
 
     # -----------------------------------------------------

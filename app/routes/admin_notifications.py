@@ -147,6 +147,77 @@ def get_email_status():
     }
 
 
+@router.get("/email-health")
+def get_email_health():
+    """Verify SMTP connectivity without sending a message.
+
+    Attempts to open an SMTP connection (with STARTTLS when configured)
+    and authenticate if credentials are present. Returns quickly on failure
+    so the endpoint is safe to poll.
+    """
+    import smtplib
+    import ssl
+
+    settings = get_email_settings()
+
+    if not settings.enabled:
+        return {
+            "status": "disabled",
+            "detail": "EMAIL_NOTIFICATIONS_ENABLED is false",
+        }
+
+    if settings.transport == "mock":
+        return {
+            "status": "ok",
+            "transport": "mock",
+            "detail": "Mock transport — no network connectivity checked",
+        }
+
+    if not settings.provider_ready:
+        return {
+            "status": "misconfigured",
+            "detail": "SMTP configuration is incomplete (host, port, from, username, or password missing)",
+        }
+
+    try:
+        if settings.smtp_use_ssl:
+            client = smtplib.SMTP_SSL(
+                settings.smtp_host,
+                settings.smtp_port,
+                timeout=10,
+                context=ssl.create_default_context(),
+            )
+        else:
+            client = smtplib.SMTP(
+                settings.smtp_host,
+                settings.smtp_port,
+                timeout=10,
+            )
+
+        with client:
+            if settings.smtp_use_tls and not settings.smtp_use_ssl:
+                client.starttls(context=ssl.create_default_context())
+            if settings.smtp_username:
+                client.login(settings.smtp_username, settings.smtp_password)
+
+        return {
+            "status": "ok",
+            "transport": "smtp",
+            "host": settings.smtp_host,
+            "port": settings.smtp_port,
+            "detail": "SMTP connection and authentication successful",
+        }
+    except Exception as exc:  # connectivity/auth failures are reported, not raised
+        message = " ".join(str(exc).split())[:500] or exc.__class__.__name__
+        return {
+            "status": "error",
+            "transport": "smtp",
+            "host": settings.smtp_host,
+            "port": settings.smtp_port,
+            "detail": message,
+        }
+
+
 @router.post("/preview", response_model=AdminNotificationPreviewResponse)
 def preview_notification(
     payload: AdminNotificationPreviewRequest,

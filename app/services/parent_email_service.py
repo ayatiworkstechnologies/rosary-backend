@@ -46,6 +46,7 @@ class EmailSettings:
     smtp_from_name: str
     smtp_use_tls: bool
     smtp_use_ssl: bool
+    smtp_message_id_domain: str
     batch_size: int
     rate_limit_per_second: int
     max_attempts: int
@@ -59,7 +60,15 @@ class EmailSettings:
     def provider_ready(self) -> bool:
         if self.transport == "mock":
             return True
-        return bool(self.smtp_host and self.smtp_from_email)
+        if self.transport == "smtp":
+            return bool(
+                self.smtp_host
+                and self.smtp_port
+                and self.smtp_from_email
+                and self.smtp_username
+                and self.smtp_password
+            )
+        return False
 
 
 def get_email_settings() -> EmailSettings:
@@ -83,6 +92,12 @@ def get_email_settings() -> EmailSettings:
             "EMAIL_PROCESSING_TIMEOUT_SECONDS", 900, 60
         ),
         fee_reminders_enabled=_bool_env("EMAIL_FEE_REMINDERS_ENABLED", False),
+        smtp_message_id_domain=os.getenv(
+            "SMTP_MESSAGE_ID_DOMAIN",
+            os.getenv("SMTP_FROM_EMAIL", "localhost").split("@")[-1]
+            if "@" in os.getenv("SMTP_FROM_EMAIL", "")
+            else "localhost",
+        ),
         portal_url=os.getenv(
             "SCHOOL_PORTAL_URL", "https://rosary-frontend.vercel.app"
         ).rstrip("/"),
@@ -158,10 +173,22 @@ def resolve_parent_email_recipients(
     return preview
 
 
-def render_parent_email_html(title: str, message: str, portal_url: str) -> str:
+def render_parent_email_html(
+    title: str,
+    message: str,
+    portal_url: str,
+    unsubscribe_url: str | None = None,
+) -> str:
     safe_title = html.escape(title)
     safe_message = "<br>".join(html.escape(message).splitlines())
     safe_portal_url = html.escape(portal_url, quote=True)
+    unsubscribe_html = ""
+    if unsubscribe_url:
+        safe_unsubscribe_url = html.escape(unsubscribe_url, quote=True)
+        unsubscribe_html = (
+            f'<br><a href="{safe_unsubscribe_url}" '
+            'style="color:#475569">Unsubscribe from email notifications</a>'
+        )
     return f"""<!doctype html>
 <html lang="en">
   <body style="margin:0;background:#f3f7fe;font-family:Arial,sans-serif;color:#10233f">
@@ -181,6 +208,7 @@ def render_parent_email_html(title: str, message: str, portal_url: str) -> str:
           </td></tr>
           <tr><td style="padding:16px 28px;background:#f8fafc;color:#64748b;font-size:12px">
             This message was sent by Rosary School. Please do not reply with sensitive student information.
+            {unsubscribe_html}
           </td></tr>
         </table>
       </td></tr>
@@ -193,17 +221,35 @@ class SMTPEmailTransport:
     def __init__(self, settings: EmailSettings):
         self.settings = settings
 
-    def send(self, recipient: str, title: str, message: str) -> str:
+    def send(
+        self,
+        recipient: str,
+        title: str,
+        message: str,
+        unsubscribe_url: str | None = None,
+        unsubscribe_page_url: str | None = None,
+    ) -> str:
         email = EmailMessage()
         email["Subject"] = title
         email["From"] = (
             f"{self.settings.smtp_from_name} <{self.settings.smtp_from_email}>"
         )
         email["To"] = recipient
-        email["Message-ID"] = f"<{uuid.uuid4()}@rosarychennai.com>"
+        message_id_domain = (
+            self.settings.smtp_message_id_domain or "localhost"
+        )
+        email["Message-ID"] = f"<{uuid.uuid4()}@{message_id_domain}>"
+        if unsubscribe_url:
+            email["List-Unsubscribe"] = f"<{unsubscribe_url}>"
+            email["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
         email.set_content(message)
         email.add_alternative(
-            render_parent_email_html(title, message, self.settings.portal_url),
+            render_parent_email_html(
+                title,
+                message,
+                self.settings.portal_url,
+                unsubscribe_page_url or unsubscribe_url,
+            ),
             subtype="html",
         )
 
@@ -239,7 +285,14 @@ class MockEmailTransport:
         self.fail_recipients = fail_recipients or set()
         self.sent: list[str] = []
 
-    def send(self, recipient: str, title: str, message: str) -> str:
+    def send(
+        self,
+        recipient: str,
+        title: str,
+        message: str,
+        unsubscribe_url: str | None = None,
+        unsubscribe_page_url: str | None = None,
+    ) -> str:
         if recipient in self.fail_recipients:
             raise RuntimeError("mock provider rejection")
         self.sent.append(recipient)
@@ -316,8 +369,9 @@ def process_email_queue(
     effective_limit = limit or settings.batch_size
     # Claim a batch inside one transaction. MySQL 8 uses SKIP LOCKED so
     # multiple supervised workers cannot select and send the same delivery.
-    # SQLite ignores FOR UPDATE, which is sufficient for the single-process
-    # synthetic test transport.
+    # SQLite does not support SKIP LOCKED; use a plain lock there since the
+    # test/E2E environment is single-process.
+    use_skip_locked = db.bind.dialect.name != "sqlite"
     deliveries = (
         db.query(EmailDelivery)
         .filter(
@@ -328,7 +382,7 @@ def process_email_queue(
             ),
         )
         .order_by(EmailDelivery.id.asc())
-        .with_for_update(skip_locked=True)
+        .with_for_update(skip_locked=use_skip_locked)
         .limit(effective_limit)
         .all()
     )
@@ -367,10 +421,25 @@ def process_email_queue(
             .first()
         )
         try:
+            parent = db.get(User, delivery.parent_user_id)
+            delivery_unsubscribe_url = None
+            if parent and parent.email:
+                from app.services.parent_email_preferences_service import (
+                    unsubscribe_urls,
+                )
+
+                (
+                    delivery_unsubscribe_url,
+                    delivery_unsubscribe_page_url,
+                ) = unsubscribe_urls(parent)
+            else:
+                delivery_unsubscribe_page_url = None
             provider_id = transport.send(
                 delivery.email,
                 batch.title,
                 batch.message,
+                unsubscribe_url=delivery_unsubscribe_url,
+                unsubscribe_page_url=delivery_unsubscribe_page_url,
             )
             delivery.status = "SENT"
             delivery.provider_message_id = provider_id
