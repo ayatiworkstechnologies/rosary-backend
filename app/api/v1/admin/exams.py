@@ -13,7 +13,13 @@ from app.models.exam_schedule import ExamSchedule
 from app.models.student_result import StudentResult
 
 from app.services.notification_service import (
+    create_notification,
     notify_teachers_of_class,
+)
+from app.services.automatic_email_service import (
+    active_parent_ids_for_classes,
+    automatic_event_delivery_enabled,
+    queue_parent_event_email,
 )
 
 from app.schemas.admin_exam import (
@@ -514,6 +520,35 @@ def update_admin_exam_results_publish_status(
                 ),
                 reference_id=exam.id,
                 link=None,
+            )
+
+        if automatic_event_delivery_enabled("RESULTS"):
+            class_ids = [class_id for (class_id,) in scheduled_class_ids]
+            parent_ids = active_parent_ids_for_classes(db, class_ids)
+            parent_message = f"Results for {exam.name} have been published."
+            for parent_id in parent_ids:
+                create_notification(
+                    db=db,
+                    user_id=parent_id,
+                    title="Results Published",
+                    message=parent_message,
+                    notification_type="RESULTS_PUBLISHED",
+                    reference_id=exam.id,
+                    link="/parent/results",
+                )
+            queue_parent_event_email(
+                db,
+                event_type="RESULTS",
+                reference_key=str(exam.id),
+                parent_ids=parent_ids,
+                created_by=None,
+                title=f"{exam.name} Results Published",
+                message=(
+                    "Dear Parent,\n\n"
+                    f"{parent_message}\n\n"
+                    "Please sign in to the Parent Portal to view your child's "
+                    "results securely."
+                ),
             )
 
     db.commit()

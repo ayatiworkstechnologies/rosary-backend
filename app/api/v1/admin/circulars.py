@@ -12,7 +12,14 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 
 from app.services.notification_service import (
+    create_notification,
     notify_all_teachers,
+)
+from app.services.automatic_email_service import (
+    active_parent_ids_for_classes,
+    all_active_parent_ids,
+    automatic_event_delivery_enabled,
+    queue_parent_event_email,
 )
 
 from app.schemas.admin_circular import (
@@ -689,6 +696,43 @@ def create_admin_circular(
                 notification_type="CIRCULAR",
                 reference_id=circular_id,
                 link="/teacher/circulars",
+            )
+
+        if (
+            payload.is_active
+            and audience in ("ALL", "PARENT", "CLASS")
+            and automatic_event_delivery_enabled("CIRCULAR")
+        ):
+            parent_ids = (
+                active_parent_ids_for_classes(db, [class_id])
+                if audience == "CLASS"
+                else all_active_parent_ids(db)
+            )
+            parent_message = f"A new circular has been published: {title}."
+            for parent_id in parent_ids:
+                create_notification(
+                    db=db,
+                    user_id=parent_id,
+                    title="New Circular",
+                    message=parent_message,
+                    notification_type="CIRCULAR",
+                    reference_id=circular_id,
+                    link="/parent/circulars",
+                )
+            queue_parent_event_email(
+                db,
+                event_type="CIRCULAR",
+                reference_key=str(circular_id),
+                parent_ids=parent_ids,
+                created_by=payload.created_by,
+                title=f"New Circular: {title}",
+                message=(
+                    "Dear Parent,\n\n"
+                    f"{parent_message}\n"
+                    f"Category: {category}\n"
+                    f"Published date: {payload.published_date.isoformat()}\n\n"
+                    "Please sign in to the Parent Portal for full details."
+                ),
             )
 
         db.commit()

@@ -10,6 +10,13 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.services.notification_service import create_notification
+from app.services.automatic_email_service import (
+    active_parent_ids_for_classes,
+    all_active_parent_ids,
+    automatic_event_delivery_enabled,
+    queue_parent_event_email,
+)
 
 from app.schemas.admin_school_event import (
     AdminSchoolEventCreate,
@@ -716,6 +723,48 @@ def create_admin_school_event(
         event_id = (
             result.lastrowid
         )
+
+        if (
+            payload.is_active
+            and audience in ("ALL", "PARENT", "CLASS")
+            and automatic_event_delivery_enabled("EVENT")
+        ):
+            parent_ids = (
+                active_parent_ids_for_classes(db, [class_id])
+                if audience == "CLASS"
+                else all_active_parent_ids(db)
+            )
+            event_title = payload.title.strip()
+            parent_message = f"A new school event has been published: {event_title}."
+            for parent_id in parent_ids:
+                create_notification(
+                    db=db,
+                    user_id=parent_id,
+                    title="New School Event",
+                    message=parent_message,
+                    notification_type="SCHOOL_EVENT",
+                    reference_id=event_id,
+                    link="/parent/calendar",
+                )
+            queue_parent_event_email(
+                db,
+                event_type="EVENT",
+                reference_key=str(event_id),
+                parent_ids=parent_ids,
+                created_by=payload.created_by,
+                title=f"School Event: {event_title}",
+                message=(
+                    "Dear Parent,\n\n"
+                    f"{parent_message}\n"
+                    f"Start date: {payload.start_date.isoformat()}\n"
+                    + (
+                        f"End date: {payload.end_date.isoformat()}\n"
+                        if payload.end_date
+                        else ""
+                    )
+                    + "\nPlease sign in to the Parent Portal for full details."
+                ),
+            )
 
         db.commit()
 

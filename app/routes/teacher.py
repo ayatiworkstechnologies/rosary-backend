@@ -19,6 +19,7 @@ from app.models.circular import Circular
 from app.models.exam import Exam
 from app.models.exam_schedule import ExamSchedule
 from app.models.homework import Homework
+from app.models.notification import Notification
 from app.models.parent_student import ParentStudent
 from app.models.school_class import SchoolClass
 from app.models.school_event import SchoolEvent
@@ -58,6 +59,11 @@ from app.schemas.teacher_exam_schedule import (
 )
 
 from app.services.notification_service import create_notification
+from app.services.automatic_email_service import (
+    active_parent_ids_for_students,
+    automatic_event_delivery_enabled,
+    queue_parent_event_email,
+)
 
 router = APIRouter(
     prefix="/api/v1/teacher",
@@ -1782,7 +1788,7 @@ def create_homework(
     # FIND PARENTS FOR THIS CLASS
     # -----------------------------------------------------
 
-    parent_user_ids = (
+    parent_user_rows = (
         db.query(
             ParentStudent.parent_user_id
         )
@@ -1798,18 +1804,30 @@ def create_homework(
             Student.is_active.is_(
                 True
             ),
+
+            User.role == "PARENT",
+
+            User.is_active.is_(True),
+        )
+        .join(
+            User,
+            User.id
+            == ParentStudent.parent_user_id,
         )
         .distinct()
         .all()
     )
 
+    parent_user_ids = sorted({
+        parent_user_id
+        for (parent_user_id,) in parent_user_rows
+    })
+
     # -----------------------------------------------------
     # CREATE PARENT NOTIFICATIONS
     # -----------------------------------------------------
 
-    for (
-        parent_user_id,
-    ) in parent_user_ids:
+    for parent_user_id in parent_user_ids:
 
         create_notification(
             db=db,
@@ -1836,6 +1854,27 @@ def create_homework(
             link=
                 "/parent/homework",
         )
+
+    email_title = f"New {homework.subject} Homework"
+    email_message = (
+        "Dear Parent,\n\n"
+        f"New homework has been assigned for "
+        f"{school_class.name}-{school_class.section}.\n"
+        f"Subject: {homework.subject}\n"
+        f"Title: {homework.title}\n"
+        f"Assigned date: {homework.assigned_date.isoformat()}\n"
+        f"Due date: {homework.due_date.isoformat()}\n\n"
+        "Please sign in to the Parent Portal to view the full details."
+    )
+    queue_parent_event_email(
+        db,
+        event_type="HOMEWORK",
+        reference_key=str(homework.id),
+        parent_ids=parent_user_ids,
+        created_by=current_teacher.id,
+        title=email_title,
+        message=email_message,
+    )
 
     # Save homework + notifications together.
     db.commit()
@@ -2114,9 +2153,14 @@ def save_class_attendance(
         student.id
         for student in class_students
     }
+    students_by_id = {
+        student.id: student
+        for student in class_students
+    }
 
     present_count = 0
     absent_count = 0
+    attendance_events = []
 
     for record in payload.records:
 
@@ -2166,6 +2210,12 @@ def save_class_attendance(
             .first()
         )
 
+        previous_status = (
+            existing.status
+            if existing
+            else None
+        )
+
         if existing:
             existing.class_id = (
                 class_id
@@ -2206,6 +2256,21 @@ def save_class_attendance(
 
             db.add(attendance)
 
+        changed_attendance = (
+            existing
+            if existing
+            else attendance
+        )
+        if previous_status != attendance_status:
+            attendance_events.append(
+                (
+                    changed_attendance,
+                    students_by_id[record.student_id],
+                    previous_status,
+                    attendance_status,
+                )
+            )
+
         if (
             attendance_status
             == "PRESENT"
@@ -2217,6 +2282,72 @@ def save_class_attendance(
             == "ABSENT"
         ):
             absent_count += 1
+
+    db.flush()
+
+    for (
+        attendance,
+        student,
+        previous_status,
+        attendance_status,
+    ) in attendance_events:
+        # Initial PRESENT entries are routine and do not notify. An absence or
+        # any later correction is important to the linked parent.
+        if previous_status is None and attendance_status == "PRESENT":
+            continue
+        if not automatic_event_delivery_enabled("ATTENDANCE"):
+            continue
+
+        parent_ids = active_parent_ids_for_students(db, [student.id])
+        if not parent_ids:
+            continue
+
+        if previous_status is None:
+            notification_title = "Attendance Alert"
+            notification_message = (
+                f"{student.full_name} was marked absent on "
+                f"{payload.attendance_date.isoformat()}."
+            )
+        else:
+            notification_title = "Attendance Updated"
+            notification_message = (
+                f"Attendance for {student.full_name} on "
+                f"{payload.attendance_date.isoformat()} was corrected from "
+                f"{previous_status.lower()} to {attendance_status.lower()}."
+            )
+
+        prior_event_count = (
+            db.query(Notification)
+            .filter(
+                Notification.notification_type == "ATTENDANCE",
+                Notification.reference_id == attendance.id,
+            )
+            .count()
+        )
+        for parent_id in parent_ids:
+            create_notification(
+                db=db,
+                user_id=parent_id,
+                title=notification_title,
+                message=notification_message,
+                notification_type="ATTENDANCE",
+                reference_id=attendance.id,
+                link="/parent/attendance",
+            )
+
+        queue_parent_event_email(
+            db,
+            event_type="ATTENDANCE",
+            reference_key=f"{attendance.id}:{prior_event_count + 1}",
+            parent_ids=parent_ids,
+            created_by=current_teacher.id,
+            title=notification_title,
+            message=(
+                "Dear Parent,\n\n"
+                f"{notification_message}\n\n"
+                "Please sign in to the Parent Portal for attendance details."
+            ),
+        )
 
     db.commit()
 

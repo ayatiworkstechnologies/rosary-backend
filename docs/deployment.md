@@ -24,6 +24,20 @@ uvicorn app.main:app --host 127.0.0.1 --port 8016
 
 Use the production process manager instead of starting a second Uvicorn process when the service is already managed.
 
+The production API must listen only on loopback. Never expose Uvicorn port
+`8016` directly to the internet or use its plain-HTTP Swagger page with a JWT.
+Use the checked-in PM2 configuration and expose the API only through the nginx
+HTTPS virtual host:
+
+```bash
+pm2 startOrReload ecosystem.config.cjs --only rosary-api
+pm2 save
+```
+
+The host firewall must deny public inbound traffic to `8016`. Confirm from an
+external machine that `http://SERVER_IP:8016/health` is unreachable while the
+HTTPS domain health endpoint remains available.
+
 Verify `/health` returns HTTP 200 with:
 
 ```json

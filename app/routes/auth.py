@@ -1,7 +1,13 @@
+import os
+import threading
+import time
+from collections import deque
+
 from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    Request,
     status,
 )
 from sqlalchemy import func, or_
@@ -34,6 +40,84 @@ router = APIRouter(
     prefix="/api/v1/auth",
     tags=["Authentication"],
 )
+
+
+# Login throttling is intentionally dependency-free so it is active in every
+# deployment. It limits both the normalized account/role tuple and the client
+# address. State is per API process; deployments with multiple API workers
+# should additionally enforce a shared limit at nginx/Redis.
+_login_attempts: dict[str, deque[float]] = {}
+_login_blocked_until: dict[str, float] = {}
+_login_attempt_lock = threading.Lock()
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, str(default))))
+    except ValueError:
+        return default
+
+
+def _login_keys(request: Request, username: str, role: str) -> tuple[str, str]:
+    client_ip = request.client.host if request.client else "unknown"
+    account_key = f"account:{role.lower()}:{username.strip().lower()}"
+    return account_key, f"ip:{client_ip}"
+
+
+def _prune_attempts(key: str, now: float, window_seconds: int) -> deque[float]:
+    attempts = _login_attempts.setdefault(key, deque())
+    cutoff = now - window_seconds
+    while attempts and attempts[0] <= cutoff:
+        attempts.popleft()
+    return attempts
+
+
+def _check_login_allowed(keys: tuple[str, str]) -> None:
+    now = time.monotonic()
+    retry_after = 0
+    with _login_attempt_lock:
+        for key in keys:
+            blocked_until = _login_blocked_until.get(key, 0)
+            if blocked_until > now:
+                retry_after = max(retry_after, int(blocked_until - now) + 1)
+            elif blocked_until:
+                _login_blocked_until.pop(key, None)
+    if retry_after:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed login attempts. Try again later.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+
+def _record_failed_login(keys: tuple[str, str]) -> None:
+    now = time.monotonic()
+    window_seconds = _positive_int_env("LOGIN_ATTEMPT_WINDOW_SECONDS", 300)
+    lockout_seconds = _positive_int_env("LOGIN_LOCKOUT_SECONDS", 900)
+    thresholds = (
+        _positive_int_env("LOGIN_MAX_FAILED_ATTEMPTS", 5),
+        _positive_int_env("LOGIN_MAX_FAILED_ATTEMPTS_PER_IP", 25),
+    )
+    with _login_attempt_lock:
+        for key, threshold in zip(keys, thresholds):
+            attempts = _prune_attempts(key, now, window_seconds)
+            attempts.append(now)
+            if len(attempts) >= threshold:
+                _login_blocked_until[key] = now + lockout_seconds
+
+
+def _clear_failed_logins(keys: tuple[str, str]) -> None:
+    with _login_attempt_lock:
+        for key in keys:
+            _login_attempts.pop(key, None)
+            _login_blocked_until.pop(key, None)
+
+
+def _reset_login_limiter_for_tests() -> None:
+    """Reset process-local state; used only by isolated automated tests."""
+    with _login_attempt_lock:
+        _login_attempts.clear()
+        _login_blocked_until.clear()
 
 
 # =========================================================
@@ -77,6 +161,7 @@ def dob_password_matches(
 )
 def login(
     payload: LoginRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     username = payload.username.strip()
@@ -86,6 +171,8 @@ def login(
         .strip()
         .upper()
     )
+    login_keys = _login_keys(request, username, selected_role)
+    _check_login_allowed(login_keys)
 
     user = None
     login_student = None
@@ -258,6 +345,7 @@ def login(
     # USER EXISTS
     # -----------------------------------------------------
     if not user:
+        _record_failed_login(login_keys)
         raise HTTPException(
             status_code=
                 status.HTTP_401_UNAUTHORIZED,
@@ -318,6 +406,7 @@ def login(
         )
 
     if not password_is_valid:
+        _record_failed_login(login_keys)
         raise HTTPException(
             status_code=
                 status.HTTP_401_UNAUTHORIZED,
@@ -354,6 +443,8 @@ def login(
                 f"{selected_role.lower()} account"
             ),
         )
+
+    _clear_failed_logins(login_keys)
 
     if parent_link_created:
         db.commit()

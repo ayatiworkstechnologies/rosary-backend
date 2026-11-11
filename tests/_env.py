@@ -17,8 +17,22 @@ if "rosary_portal_test" not in _EXISTING_URL:
 
 os.environ.setdefault("SECRET_KEY", "test-secret-key-that-is-at-least-32-bytes")
 os.environ.setdefault("ALGORITHM", "HS256")
-os.environ.setdefault("EMAIL_NOTIFICATIONS_ENABLED", "true")
-os.environ.setdefault("EMAIL_TRANSPORT", "mock")
+# Tests must never inherit real SMTP or automatic-broadcast settings from the
+# developer shell or local .env. Individual tests may temporarily patch these
+# values, but the suite-wide baseline is always mock and fail closed.
+os.environ["EMAIL_NOTIFICATIONS_ENABLED"] = "true"
+os.environ["EMAIL_TRANSPORT"] = "mock"
+os.environ["EMAIL_AUTOMATION_TEST_MODE"] = "true"
+os.environ["EMAIL_HOMEWORK_NOTIFICATIONS_ENABLED"] = "false"
+os.environ["EMAIL_ATTENDANCE_NOTIFICATIONS_ENABLED"] = "false"
+os.environ["EMAIL_RESULTS_NOTIFICATIONS_ENABLED"] = "false"
+os.environ["EMAIL_CIRCULAR_NOTIFICATIONS_ENABLED"] = "false"
+os.environ["EMAIL_EVENT_NOTIFICATIONS_ENABLED"] = "false"
+os.environ["EMAIL_HOMEWORK_TEST_RECIPIENTS"] = ""
+os.environ["EMAIL_ATTENDANCE_TEST_RECIPIENTS"] = ""
+os.environ["EMAIL_RESULTS_TEST_RECIPIENTS"] = ""
+os.environ["EMAIL_CIRCULAR_TEST_RECIPIENTS"] = ""
+os.environ["EMAIL_EVENT_TEST_RECIPIENTS"] = ""
 os.environ.setdefault("SMTP_FROM_EMAIL", "no-reply@example.com")
 os.environ.setdefault("EMAIL_RATE_LIMIT_PER_SECOND", "0")
 os.environ.setdefault("EMAIL_RETRY_BASE_SECONDS", "1")
