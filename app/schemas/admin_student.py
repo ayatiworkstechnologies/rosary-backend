@@ -1,6 +1,6 @@
 from datetime import date
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 
 class AdminStudentCreate(BaseModel):
@@ -21,7 +21,9 @@ class AdminStudentCreate(BaseModel):
         max_length=150,
     )
 
-    date_of_birth: date | None = None
+    date_of_birth: date
+
+    parent_email: EmailStr | None = None
 
     gender: str | None = Field(
         default=None,
@@ -52,6 +54,8 @@ class AdminStudentUpdate(BaseModel):
     )
 
     date_of_birth: date | None = None
+
+    parent_email: EmailStr | None = None
 
     gender: str | None = Field(
         default=None,

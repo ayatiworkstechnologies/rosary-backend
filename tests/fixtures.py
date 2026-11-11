@@ -70,6 +70,7 @@ def seed(db):
 
     db.add_all([
         TeacherProfile(user_id=teacher.id, employee_id="TESTEMP1",
+                       date_of_birth=date(1990, 8, 15),
                        designation="Teacher", phone="9999000001"),
         TeacherProfile(user_id=other_teacher.id, employee_id="TESTEMP2",
                        designation="Teacher", phone="9999000002"),
@@ -91,11 +92,14 @@ def seed(db):
     ])
 
     s1 = Student(admission_no="TESTADM1", roll_no="1", full_name="Test Student One",
-                 class_id=class_a.id, gender="M", is_active=True)
+                 date_of_birth=date(2014, 2, 9), class_id=class_a.id,
+                 gender="M", is_active=True)
     s2 = Student(admission_no="TESTADM2", roll_no="2", full_name="Test Student Two",
-                 class_id=class_a.id, gender="F", is_active=True)
+                 date_of_birth=date(2015, 3, 10), class_id=class_a.id,
+                 gender="F", is_active=True)
     s3 = Student(admission_no="TESTADM3", roll_no="1", full_name="Test Student Three",
-                 class_id=class_b.id, gender="F", is_active=True)
+                 date_of_birth=date(2014, 4, 11), class_id=class_b.id,
+                 gender="F", is_active=True)
     db.add_all([s1, s2, s3])
     db.flush()
 

@@ -21,8 +21,10 @@ class AdminTeacherCreate(BaseModel):
         max_length=150,
     )
 
-    password: str = Field(
-        ...,
+    # Retained as an optional compatibility field for older clients. Teacher
+    # passwords are generated from date_of_birth by the backend.
+    password: str | None = Field(
+        default=None,
         min_length=6,
         max_length=100,
     )
@@ -33,7 +35,7 @@ class AdminTeacherCreate(BaseModel):
         max_length=50,
     )
 
-    date_of_birth: date | None = None
+    date_of_birth: date
 
     gender: str | None = Field(
         default=None,
@@ -101,7 +103,7 @@ class AdminTeacherUpdate(BaseModel):
         max_length=50,
     )
 
-    date_of_birth: date | None = None
+    date_of_birth: date
 
     gender: str | None = Field(
         default=None,

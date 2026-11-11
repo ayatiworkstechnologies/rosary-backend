@@ -67,10 +67,15 @@ class ParentWorkflowTests(ApiTestBase):
         self.assertEqual(me.json()["username"], "PAR_TEST")
 
     def test_login_with_admission_number_resolves_parent(self):
-        for adm in ("TESTADM1", "TESTADM2"):
+        credentials = (
+            ("TESTADM1", "09022014"),
+            ("TESTADM2", "10032015"),
+        )
+
+        for adm, dob_password in credentials:
             resp = self.client.post(
                 "/api/v1/auth/login",
-                json={"username": adm, "password": "Par@Test1!", "role": "PARENT"},
+                json={"username": adm, "password": dob_password, "role": "PARENT"},
             )
             self.assertEqual(resp.status_code, 200, resp.text)
             self.assertEqual(resp.json()["user"]["username"], "PAR_TEST")

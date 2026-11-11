@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.core.security import hash_password
 
 from app.schemas.admin_student import (
     AdminStudentCreate,
@@ -199,6 +200,17 @@ def get_students(
                     s.class_id,
                     s.is_active,
 
+                    (
+                        SELECT u.email
+                        FROM parent_students AS ps
+                        JOIN users AS u
+                            ON u.id = ps.parent_user_id
+                        WHERE ps.student_id = s.id
+                          AND UPPER(u.role) = 'PARENT'
+                        ORDER BY ps.id ASC
+                        LIMIT 1
+                    ) AS parent_email,
+
                     sc.name AS class_name,
                     sc.section,
                     sc.academic_year
@@ -233,6 +245,7 @@ def get_students(
                     "roll_no": row["roll_no"],
                     "full_name": row["full_name"],
                     "date_of_birth": row["date_of_birth"],
+                    "parent_email": row["parent_email"],
                     "gender": row["gender"],
                     "class_id": row["class_id"],
                     "is_active": bool(
@@ -310,6 +323,17 @@ def get_student(
                     s.class_id,
                     s.is_active,
 
+                    (
+                        SELECT u.email
+                        FROM parent_students AS ps
+                        JOIN users AS u
+                            ON u.id = ps.parent_user_id
+                        WHERE ps.student_id = s.id
+                          AND UPPER(u.role) = 'PARENT'
+                        ORDER BY ps.id ASC
+                        LIMIT 1
+                    ) AS parent_email,
+
                     sc.name AS class_name,
                     sc.section,
                     sc.academic_year
@@ -345,6 +369,9 @@ def get_student(
                 "full_name": row["full_name"],
                 "date_of_birth": (
                     row["date_of_birth"]
+                ),
+                "parent_email": (
+                    row["parent_email"]
                 ),
                 "gender": row["gender"],
                 "class_id": row["class_id"],
@@ -419,6 +446,14 @@ def create_student(
             payload.gender
         )
 
+        parent_email = (
+            str(payload.parent_email)
+            .strip()
+            .lower()
+            if payload.parent_email
+            else None
+        )
+
         # ---------------------------------
         # Check admission number duplicate
         # ---------------------------------
@@ -455,6 +490,72 @@ def create_student(
         validate_class(
             db,
             payload.class_id,
+        )
+
+        # Reuse an existing parent account when siblings share the same email.
+        # Admission-number authentication still uses each student's own DOB.
+        existing_email_user = None
+
+        if parent_email:
+            existing_email_user = db.execute(
+                text(
+                    """
+                    SELECT id, role, is_active
+                    FROM users
+                    WHERE LOWER(email) = LOWER(:email)
+                    LIMIT 1
+                    """
+                ),
+                {
+                    "email": parent_email,
+                },
+            ).mappings().first()
+
+            if (
+                existing_email_user
+                and existing_email_user["role"].upper()
+                != "PARENT"
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Email address is already used "
+                        "by a non-parent account"
+                    ),
+                )
+
+        # The admission number is the parent-facing login identifier. Keep a
+        # separate internal username because users.username is globally unique.
+        parent_username = f"PARENT_{admission_no}"
+
+        if not existing_email_user:
+            existing_parent_username = db.execute(
+                text(
+                    """
+                    SELECT id
+                    FROM users
+                    WHERE LOWER(username) = LOWER(:username)
+                    LIMIT 1
+                    """
+                ),
+                {
+                    "username": parent_username,
+                },
+            ).first()
+
+            if existing_parent_username:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "A parent login already exists "
+                        "for this admission number"
+                    ),
+                )
+
+        login_password = (
+            payload.date_of_birth.strftime(
+                "%d%m%Y"
+            )
         )
 
         # ---------------------------------
@@ -514,6 +615,94 @@ def create_student(
             },
         )
 
+        student_id = result.lastrowid
+
+        # Create the login, profile, and link in the same transaction as the
+        # student so a partial account can never be left behind.
+        if existing_email_user:
+            parent_user_id = (
+                existing_email_user["id"]
+            )
+        else:
+            parent_result = db.execute(
+                text(
+                    """
+                    INSERT INTO users
+                    (
+                        name,
+                        username,
+                        email,
+                        password_hash,
+                        role,
+                        is_active
+                    )
+                    VALUES
+                    (
+                        :name,
+                        :username,
+                        :email,
+                        :password_hash,
+                        'PARENT',
+                        :is_active
+                    )
+                    """
+                ),
+                {
+                    "name": f"Parent of {full_name}",
+                    "username": parent_username,
+                    "email": parent_email,
+                    "password_hash": hash_password(
+                        login_password
+                    ),
+                    "is_active": (
+                        1
+                        if payload.is_active
+                        else 0
+                    ),
+                },
+            )
+
+            parent_user_id = (
+                parent_result.lastrowid
+            )
+
+            db.execute(
+                text(
+                    """
+                    INSERT INTO parent_profiles
+                    (user_id)
+                    VALUES (:user_id)
+                    """
+                ),
+                {
+                    "user_id": parent_user_id,
+                },
+            )
+
+        db.execute(
+            text(
+                """
+                INSERT INTO parent_students
+                (
+                    parent_user_id,
+                    student_id,
+                    relationship
+                )
+                VALUES
+                (
+                    :parent_user_id,
+                    :student_id,
+                    'Guardian'
+                )
+                """
+            ),
+            {
+                "parent_user_id":
+                    parent_user_id,
+                "student_id": student_id,
+            },
+        )
+
         db.commit()
 
         return {
@@ -523,7 +712,7 @@ def create_student(
                 "successfully"
             ),
             "data": {
-                "id": result.lastrowid,
+                "id": student_id,
                 "admission_no":
                     admission_no,
                 "roll_no":
@@ -532,12 +721,20 @@ def create_student(
                     full_name,
                 "date_of_birth":
                     payload.date_of_birth,
+                "parent_email":
+                    parent_email,
                 "gender":
                     gender,
                 "class_id":
                     payload.class_id,
                 "is_active":
                     payload.is_active,
+                "login_username":
+                    admission_no,
+                "initial_password":
+                    login_password,
+                "parent_account_reused":
+                    bool(existing_email_user),
             },
         }
 
@@ -579,16 +776,34 @@ def update_student(
         student = db.execute(
             text(
                 """
-                SELECT id
-                FROM students
-                WHERE id = :student_id
+                SELECT
+                    s.id,
+                    (
+                        SELECT ps.parent_user_id
+                        FROM parent_students AS ps
+                        WHERE ps.student_id = s.id
+                        ORDER BY ps.id ASC
+                        LIMIT 1
+                    ) AS parent_user_id,
+                    (
+                        SELECT u.email
+                        FROM parent_students AS ps
+                        JOIN users AS u
+                            ON u.id = ps.parent_user_id
+                        WHERE ps.student_id = s.id
+                          AND UPPER(u.role) = 'PARENT'
+                        ORDER BY ps.id ASC
+                        LIMIT 1
+                    ) AS parent_email
+                FROM students AS s
+                WHERE s.id = :student_id
                 LIMIT 1
                 """
             ),
             {
                 "student_id": student_id,
             },
-        ).first()
+        ).mappings().first()
 
         if not student:
             raise HTTPException(
@@ -611,6 +826,63 @@ def update_student(
         gender = clean_optional_string(
             payload.gender
         )
+
+        parent_email_was_provided = (
+            "parent_email"
+            in payload.model_fields_set
+        )
+
+        parent_email = (
+            (
+                str(payload.parent_email)
+                .strip()
+                .lower()
+                if payload.parent_email
+                else None
+            )
+            if parent_email_was_provided
+            else student["parent_email"]
+        )
+
+        parent_user_id = (
+            student["parent_user_id"]
+        )
+
+        if parent_email and not parent_user_id:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Link a parent account before "
+                    "adding a parent email"
+                ),
+            )
+
+        if parent_email:
+            duplicate_email = db.execute(
+                text(
+                    """
+                    SELECT id
+                    FROM users
+                    WHERE LOWER(email) = LOWER(:email)
+                      AND id != :parent_user_id
+                    LIMIT 1
+                    """
+                ),
+                {
+                    "email": parent_email,
+                    "parent_user_id":
+                        parent_user_id,
+                },
+            ).first()
+
+            if duplicate_email:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Email address is already used "
+                        "by another account"
+                    ),
+                )
 
         # ---------------------------------
         # Duplicate admission number
@@ -724,6 +996,39 @@ def update_student(
             },
         )
 
+        if (
+            parent_user_id
+            and parent_email_was_provided
+        ):
+            db.execute(
+                text(
+                    """
+                    UPDATE users
+                    SET
+                        email_verified_at = CASE
+                            WHEN COALESCE(email, '')
+                                != COALESCE(:email, '')
+                            THEN NULL
+                            ELSE email_verified_at
+                        END,
+                        email_notifications_enabled = CASE
+                            WHEN COALESCE(email, '')
+                                != COALESCE(:email, '')
+                            THEN 0
+                            ELSE email_notifications_enabled
+                        END,
+                        email = :email
+                    WHERE id = :parent_user_id
+                      AND UPPER(role) = 'PARENT'
+                    """
+                ),
+                {
+                    "email": parent_email,
+                    "parent_user_id":
+                        parent_user_id,
+                },
+            )
+
         db.commit()
 
         return {
@@ -743,6 +1048,8 @@ def update_student(
                     full_name,
                 "date_of_birth":
                     payload.date_of_birth,
+                "parent_email":
+                    parent_email,
                 "gender":
                     gender,
                 "class_id":

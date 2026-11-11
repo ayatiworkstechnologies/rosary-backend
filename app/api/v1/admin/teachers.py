@@ -570,7 +570,9 @@ def create_admin_teacher(
         # ----------------------------------------------------
 
         password_hash = hash_password(
-            payload.password
+            payload.date_of_birth.strftime(
+                "%d%m%Y"
+            )
         )
 
         # ----------------------------------------------------
@@ -896,7 +898,8 @@ def update_admin_teacher(
                 SET
                     name = :name,
                     username = :username,
-                    email = :email
+                    email = :email,
+                    password_hash = :password_hash
                 WHERE id = :user_id
                   AND role = 'TEACHER'
                 """
@@ -905,6 +908,11 @@ def update_admin_teacher(
                 "name": name,
                 "username": username,
                 "email": email,
+                "password_hash": hash_password(
+                    payload.date_of_birth.strftime(
+                        "%d%m%Y"
+                    )
+                ),
                 "user_id": user_id,
             },
         )
