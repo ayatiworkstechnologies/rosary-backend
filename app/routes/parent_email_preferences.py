@@ -1,8 +1,9 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from email_validator import EmailNotValidError
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from jwt.exceptions import InvalidTokenError
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -20,6 +21,8 @@ from app.services.parent_email_preferences_service import (
     decode_unsubscribe_token,
     send_verification_email,
     token_digest,
+    verification_email_enabled,
+    verification_rate_limit,
 )
 from app.services.parent_email_service import normalize_email
 
@@ -90,6 +93,37 @@ def request_email_verification(
 
     if current_user.email_verified_at is not None:
         return MessageResponse(message="Email address is already verified")
+
+    if not verification_email_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Email verification is temporarily unavailable",
+        )
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    max_requests, window_seconds, cooldown_seconds = verification_rate_limit()
+    window_start = now - timedelta(seconds=window_seconds)
+    recent_query = db.query(EmailVerificationToken).filter(
+        EmailVerificationToken.user_id == current_user.id,
+        EmailVerificationToken.created_at >= window_start,
+    )
+    latest_created_at = recent_query.with_entities(
+        func.max(EmailVerificationToken.created_at)
+    ).scalar()
+    if latest_created_at is not None:
+        retry_after = cooldown_seconds - int((now - latest_created_at).total_seconds())
+        if retry_after > 0:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Please wait before requesting another verification email",
+                headers={"Retry-After": str(retry_after)},
+            )
+    if recent_query.count() >= max_requests:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Verification email request limit reached. Please try again later",
+            headers={"Retry-After": str(window_seconds)},
+        )
 
     raw_token = create_verification_token(db, current_user)
     try:

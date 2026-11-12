@@ -28,6 +28,7 @@ from app.services.parent_email_service import (
     resolve_parent_email_recipients,
 )
 from app.services.email_worker_health import read_worker_heartbeat
+from app.services.parent_email_preferences_service import verification_email_enabled
 
 
 router = APIRouter(
@@ -141,6 +142,7 @@ def get_email_status():
     settings = get_email_settings()
     return {
         "enabled": settings.enabled,
+        "verification_enabled": verification_email_enabled(),
         "provider_ready": settings.provider_ready,
         "transport": settings.transport,
         "fee_reminders_enabled": settings.fee_reminders_enabled,
@@ -163,10 +165,10 @@ def get_email_health():
 
     settings = get_email_settings()
 
-    if not settings.enabled:
+    if not settings.enabled and not verification_email_enabled():
         return {
             "status": "disabled",
-            "detail": "EMAIL_NOTIFICATIONS_ENABLED is false",
+            "detail": "Automatic and verification email delivery are disabled",
         }
 
     if settings.transport == "mock":

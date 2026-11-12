@@ -16,14 +16,20 @@ notification requests never contact SMTP directly. A failed provider call is
 retried with exponential backoff, and final failures remain visible in Admin
 delivery history. The authenticated verification-request endpoint sends its
 single transactional message immediately so the parent receives a clear
-success or failure result. Run one continuously supervised worker, or invoke
+success or failure result. It uses an independent feature gate and
+database-backed per-parent cooldown/window limits, so enabling verification
+does not enable automatic categories. Run one continuously supervised worker, or invoke
 `--once` from a scheduled job.
 
 ## Required environment variables
 
 Names only; secrets must remain in the server secret store:
 
-- `EMAIL_NOTIFICATIONS_ENABLED`
+- `EMAIL_NOTIFICATIONS_ENABLED` (automatic/outbox worker switch)
+- `EMAIL_VERIFICATION_ENABLED` (independent verification switch; default `false`)
+- `EMAIL_VERIFICATION_MAX_REQUESTS` (default `3`)
+- `EMAIL_VERIFICATION_WINDOW_SECONDS` (default `3600`)
+- `EMAIL_VERIFICATION_COOLDOWN_SECONDS` (default `60`)
 - `EMAIL_TRANSPORT` (`smtp` in production, `mock` in tests)
 - `SMTP_HOST`
 - `SMTP_PORT`
@@ -52,7 +58,8 @@ Names only; secrets must remain in the server secret store:
 - `PATCH /api/v1/parent/email-preferences` enables or disables email. Enabling
   requires a verified address; disabling is always allowed.
 - `POST /api/v1/parent/email-preferences/verification/request` sends a new
-  one-time verification link to the authenticated parent's saved address.
+  one-time verification link to the authenticated parent's saved address when
+  the narrow feature gate and request rate limit allow it.
 - `POST /api/v1/parent/email-preferences/verification/confirm` consumes the
   raw token in a JSON body. The parent must then opt in with the preference
   endpoint; verification alone does not enable notifications.

@@ -41,6 +41,9 @@ if "mysql" in DATABASE_URL.lower():
     raise RuntimeError("E2E server must never run against MySQL")
 
 os.environ["DATABASE_URL"] = DATABASE_URL
+# tests._env intentionally refuses to inherit DATABASE_URL. This is the
+# explicit, already-validated SQLite opt-in used by the fixture importer.
+os.environ["ROSARY_TEST_DATABASE_URL"] = DATABASE_URL
 os.environ.setdefault(
     "SECRET_KEY", "e2e-only-secret-key-that-is-at-least-32-bytes-long"
 )
@@ -51,6 +54,8 @@ os.environ.setdefault("ALGORITHM", "HS256")
 # mock.
 os.environ["EMAIL_NOTIFICATIONS_ENABLED"] = "true"
 os.environ["EMAIL_TRANSPORT"] = "mock"
+os.environ["EMAIL_VERIFICATION_ENABLED"] = "true"
+os.environ["EMAIL_VERIFICATION_COOLDOWN_SECONDS"] = "1"
 os.environ["SMTP_FROM_EMAIL"] = "school@example.com"
 os.environ["EMAIL_RATE_LIMIT_PER_SECOND"] = "0"
 

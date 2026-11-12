@@ -16,6 +16,12 @@ from app.models.notification import Notification
 from app.models.school_event import SchoolEvent
 from app.models.student_fee import StudentFee
 from app.models.student_result import StudentResult
+from app.services.automatic_email_service import (
+    EVENT_FLAGS,
+    EVENT_TEST_ALLOWLISTS,
+    _test_allowlist,
+    automatic_event_enabled,
+)
 from tests.api_base import ApiTestBase
 
 
@@ -52,6 +58,79 @@ class AutomaticSupportedEventEmailTests(ApiTestBase):
             db.commit()
         finally:
             db.close()
+
+        env = {**BASE_ENV, "EMAIL_ATTENDANCE_NOTIFICATIONS_ENABLED": "true"}
+        endpoint = f"/api/v1/teacher/classes/{self.ids['class_a']}/attendance"
+        with patch.dict(os.environ, env, clear=False):
+            absent = self.post(
+                endpoint,
+                self.tokens["teacher"],
+                json={
+                    "attendance_date": attendance_date.isoformat(),
+                    "records": [{"student_id": self.ids["s1"], "status": "ABSENT"}],
+                },
+            )
+            self.assertEqual(absent.status_code, 200, absent.text)
+            corrected = self.post(
+                endpoint,
+                self.tokens["teacher"],
+                json={
+                    "attendance_date": attendance_date.isoformat(),
+                    "records": [{"student_id": self.ids["s1"], "status": "PRESENT"}],
+                },
+            )
+            self.assertEqual(corrected.status_code, 200, corrected.text)
+
+        db = SessionLocal()
+        try:
+            attendance = db.query(Attendance).filter_by(
+                student_id=self.ids["s1"], attendance_date=attendance_date
+            ).one()
+            matching = (
+                db.query(EmailNotificationBatch)
+                .filter_by(category="ATTENDANCE", created_by=self.ids["teacher"])
+                .all()
+            )
+            self.assertEqual(len(matching), 2)
+            self.assertTrue(all(batch.email_recipient_count == 1 for batch in matching))
+            self.assertEqual(
+                db.query(Notification).filter_by(
+                    reference_id=attendance.id, notification_type="ATTENDANCE"
+                ).count(),
+                2,
+            )
+            batch_ids = [batch.id for batch in matching]
+            db.query(EmailDelivery).filter(EmailDelivery.batch_id.in_(batch_ids)).delete(
+                synchronize_session=False
+            )
+            db.query(EmailNotificationBatch).filter(
+                EmailNotificationBatch.id.in_(batch_ids)
+            ).delete(synchronize_session=False)
+            db.query(Notification).filter_by(
+                reference_id=attendance.id, notification_type="ATTENDANCE"
+            ).delete(synchronize_session=False)
+            db.delete(attendance)
+            db.commit()
+        finally:
+            db.close()
+
+    def test_all_six_categories_are_default_off_and_have_strict_allowlists(self):
+        disabled = {flag: "false" for flag in EVENT_FLAGS.values()}
+        with patch.dict(os.environ, disabled, clear=False):
+            self.assertTrue(
+                all(not automatic_event_enabled(category) for category in EVENT_FLAGS)
+            )
+
+        for category, allowlist_name in EVENT_TEST_ALLOWLISTS.items():
+            with patch.dict(
+                os.environ,
+                {allowlist_name: " ALLOWED@example.com, invalid-address "},
+                clear=False,
+            ):
+                self.assertEqual(_test_allowlist(category), {"allowed@example.com"})
+
+            with patch.dict(os.environ, {allowlist_name: ""}, clear=False):
+                self.assertEqual(_test_allowlist(category), set())
 
     def test_disabled_attendance_email_keeps_parent_in_app_alert(self):
         attendance_date = date.today() - timedelta(days=450)
@@ -105,60 +184,6 @@ class AutomaticSupportedEventEmailTests(ApiTestBase):
             db.query(Notification).filter_by(
                 notification_type="ATTENDANCE",
                 reference_id=attendance.id,
-            ).delete(synchronize_session=False)
-            db.delete(attendance)
-            db.commit()
-        finally:
-            db.close()
-
-        env = {**BASE_ENV, "EMAIL_ATTENDANCE_NOTIFICATIONS_ENABLED": "true"}
-        endpoint = f"/api/v1/teacher/classes/{self.ids['class_a']}/attendance"
-        with patch.dict(os.environ, env, clear=False):
-            absent = self.post(
-                endpoint,
-                self.tokens["teacher"],
-                json={
-                    "attendance_date": attendance_date.isoformat(),
-                    "records": [{"student_id": self.ids["s1"], "status": "ABSENT"}],
-                },
-            )
-            self.assertEqual(absent.status_code, 200, absent.text)
-            corrected = self.post(
-                endpoint,
-                self.tokens["teacher"],
-                json={
-                    "attendance_date": attendance_date.isoformat(),
-                    "records": [{"student_id": self.ids["s1"], "status": "PRESENT"}],
-                },
-            )
-            self.assertEqual(corrected.status_code, 200, corrected.text)
-
-        db = SessionLocal()
-        try:
-            attendance = db.query(Attendance).filter_by(
-                student_id=self.ids["s1"], attendance_date=attendance_date
-            ).one()
-            batches = db.query(EmailNotificationBatch).filter_by(
-                category="ATTENDANCE"
-            ).all()
-            matching = [b for b in batches if b.created_by == self.ids["teacher"]]
-            self.assertEqual(len(matching), 2)
-            self.assertTrue(all(b.email_recipient_count == 1 for b in matching))
-            self.assertEqual(
-                db.query(Notification).filter_by(
-                    reference_id=attendance.id, notification_type="ATTENDANCE"
-                ).count(),
-                2,
-            )
-            batch_ids = [b.id for b in matching]
-            db.query(EmailDelivery).filter(EmailDelivery.batch_id.in_(batch_ids)).delete(
-                synchronize_session=False
-            )
-            db.query(EmailNotificationBatch).filter(
-                EmailNotificationBatch.id.in_(batch_ids)
-            ).delete(synchronize_session=False)
-            db.query(Notification).filter_by(
-                reference_id=attendance.id, notification_type="ATTENDANCE"
             ).delete(synchronize_session=False)
             db.delete(attendance)
             db.commit()
