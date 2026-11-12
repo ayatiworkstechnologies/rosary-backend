@@ -18,7 +18,6 @@ from app.services.notification_service import (
 from app.services.automatic_email_service import (
     active_parent_ids_for_classes,
     all_active_parent_ids,
-    automatic_event_delivery_enabled,
     queue_parent_event_email,
 )
 
@@ -701,7 +700,6 @@ def create_admin_circular(
         if (
             payload.is_active
             and audience in ("ALL", "PARENT", "CLASS")
-            and automatic_event_delivery_enabled("CIRCULAR")
         ):
             parent_ids = (
                 active_parent_ids_for_classes(db, [class_id])

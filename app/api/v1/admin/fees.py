@@ -12,6 +12,12 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.models.student import Student
+from app.services.automatic_email_service import (
+    active_parent_ids_for_students,
+    queue_parent_event_email,
+)
+from app.services.notification_service import create_notification
 
 from app.schemas.admin_fee import (
     AdminFeeCreate,
@@ -758,7 +764,6 @@ def create_admin_fee(
         paid_amount = Decimal(
             str(payload.paid_amount)
         )
-
         if amount <= Decimal("0"):
             raise HTTPException(
                 status_code=400,
@@ -1141,6 +1146,9 @@ def update_admin_fee_payment(
         paid_amount = Decimal(
             str(payload.paid_amount)
         )
+        previous_paid_amount = Decimal(
+            str(existing["paid_amount"])
+        )
 
         if paid_amount > total_amount:
             raise HTTPException(
@@ -1244,6 +1252,49 @@ def update_admin_fee_payment(
                     fee_id,
             },
         )
+
+        # A payment confirmation is emitted only when the cumulative paid
+        # amount increases. Re-saving the same value or making a correction
+        # downward must not duplicate a notification or email job.
+        if paid_amount > previous_paid_amount:
+            student = db.get(Student, existing["student_id"])
+            parent_ids = active_parent_ids_for_students(
+                db,
+                [existing["student_id"]],
+            )
+            balance_amount = total_amount - paid_amount
+            student_name = student.full_name if student else "your child"
+            notification_message = (
+                f"A fee payment of {paid_amount:.2f} was recorded for "
+                f"{student_name}. Balance: {balance_amount:.2f}."
+            )
+            for parent_id in parent_ids:
+                create_notification(
+                    db=db,
+                    user_id=parent_id,
+                    title="Fee Payment Confirmed",
+                    message=notification_message,
+                    notification_type="FEE_PAYMENT",
+                    reference_id=fee_id,
+                    link="/parent/fees",
+                )
+            queue_parent_event_email(
+                db,
+                event_type="FEE_PAYMENT",
+                reference_key=(
+                    f"{fee_id}:{paid_amount}:{paid_date}:"
+                    f"{receipt_no or ''}"
+                ),
+                parent_ids=parent_ids,
+                created_by=None,
+                title="Fee Payment Confirmed",
+                message=(
+                    "Dear Parent,\n\n"
+                    f"{notification_message}\n"
+                    + (f"Receipt number: {receipt_no}\n" if receipt_no else "")
+                    + "\nPlease sign in to the Parent Portal for fee details."
+                ),
+            )
 
         db.commit()
 

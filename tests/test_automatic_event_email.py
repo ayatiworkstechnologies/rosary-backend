@@ -14,6 +14,7 @@ from app.models.exam import Exam
 from app.models.exam_schedule import ExamSchedule
 from app.models.notification import Notification
 from app.models.school_event import SchoolEvent
+from app.models.student_fee import StudentFee
 from app.models.student_result import StudentResult
 from tests.api_base import ApiTestBase
 
@@ -48,6 +49,64 @@ class AutomaticSupportedEventEmailTests(ApiTestBase):
             db.query(Attendance).filter_by(
                 student_id=self.ids["s1"], attendance_date=attendance_date
             ).delete()
+            db.commit()
+        finally:
+            db.close()
+
+    def test_disabled_attendance_email_keeps_parent_in_app_alert(self):
+        attendance_date = date.today() - timedelta(days=450)
+        db = SessionLocal()
+        try:
+            db.query(Attendance).filter_by(
+                student_id=self.ids["s1"], attendance_date=attendance_date
+            ).delete()
+            db.commit()
+        finally:
+            db.close()
+
+        env = {
+            **BASE_ENV,
+            "EMAIL_ATTENDANCE_NOTIFICATIONS_ENABLED": "false",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            response = self.post(
+                f"/api/v1/teacher/classes/{self.ids['class_a']}/attendance",
+                self.tokens["teacher"],
+                json={
+                    "attendance_date": attendance_date.isoformat(),
+                    "records": [{"student_id": self.ids["s1"], "status": "ABSENT"}],
+                },
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+
+        db = SessionLocal()
+        try:
+            attendance = db.query(Attendance).filter_by(
+                student_id=self.ids["s1"], attendance_date=attendance_date
+            ).one()
+            self.assertEqual(
+                db.query(Notification).filter_by(
+                    user_id=self.ids["parent"],
+                    notification_type="ATTENDANCE",
+                    reference_id=attendance.id,
+                ).count(),
+                1,
+            )
+            self.assertEqual(
+                db.query(EmailNotificationBatch).filter_by(
+                    category="ATTENDANCE",
+                    created_by=self.ids["teacher"],
+                ).filter(
+                    EmailNotificationBatch.idempotency_key.isnot(None),
+                    EmailNotificationBatch.created_at >= attendance.created_at,
+                ).count(),
+                0,
+            )
+            db.query(Notification).filter_by(
+                notification_type="ATTENDANCE",
+                reference_id=attendance.id,
+            ).delete(synchronize_session=False)
+            db.delete(attendance)
             db.commit()
         finally:
             db.close()
@@ -249,3 +308,86 @@ class AutomaticSupportedEventEmailTests(ApiTestBase):
         finally:
             db.close()
 
+    def test_fee_payment_increase_notifies_once_and_queues_email(self):
+        db = SessionLocal()
+        try:
+            fee = db.query(StudentFee).filter_by(
+                student_id=self.ids["s1"],
+                fee_title="Term 2",
+            ).one()
+            fee_id = fee.id
+            original = (
+                fee.paid_amount,
+                fee.paid_date,
+                fee.receipt_no,
+                fee.payment_mode,
+                fee.remarks,
+            )
+        finally:
+            db.close()
+
+        payload = {
+            "paid_amount": "100.00",
+            "paid_date": date.today().isoformat(),
+            "receipt_no": "AUTO-EMAIL-RECEIPT",
+            "payment_mode": "CASH",
+            "remarks": "Synthetic payment",
+        }
+        env = {
+            **BASE_ENV,
+            "EMAIL_FEE_PAYMENT_NOTIFICATIONS_ENABLED": "true",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            first = self.patch(
+                f"/api/v1/admin/fees/{fee_id}/payment",
+                self.tokens["admin"],
+                json=payload,
+            )
+            second = self.patch(
+                f"/api/v1/admin/fees/{fee_id}/payment",
+                self.tokens["admin"],
+                json=payload,
+            )
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(second.status_code, 200, second.text)
+
+        db = SessionLocal()
+        try:
+            batches = db.query(EmailNotificationBatch).filter_by(
+                category="FEE_PAYMENT",
+                target_type="AUTOMATIC_FEE_PAYMENT",
+            ).all()
+            matching = [batch for batch in batches if batch.title == "Fee Payment Confirmed"]
+            self.assertEqual(len(matching), 1)
+            batch = matching[0]
+            self.assertEqual(batch.email_recipient_count, 1)
+            self.assertEqual(
+                db.query(EmailDelivery).filter_by(batch_id=batch.id).count(),
+                1,
+            )
+            self.assertEqual(
+                db.query(Notification).filter_by(
+                    user_id=self.ids["parent"],
+                    notification_type="FEE_PAYMENT",
+                    reference_id=fee_id,
+                ).count(),
+                1,
+            )
+
+            db.query(EmailDelivery).filter_by(batch_id=batch.id).delete()
+            db.delete(batch)
+            db.query(Notification).filter_by(
+                notification_type="FEE_PAYMENT",
+                reference_id=fee_id,
+            ).delete(synchronize_session=False)
+            fee = db.get(StudentFee, fee_id)
+            (
+                fee.paid_amount,
+                fee.paid_date,
+                fee.receipt_no,
+                fee.payment_mode,
+                fee.remarks,
+            ) = original
+            db.commit()
+        finally:
+            db.close()

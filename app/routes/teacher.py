@@ -61,7 +61,6 @@ from app.schemas.teacher_exam_schedule import (
 from app.services.notification_service import create_notification
 from app.services.automatic_email_service import (
     active_parent_ids_for_students,
-    automatic_event_delivery_enabled,
     queue_parent_event_email,
 )
 
@@ -2295,9 +2294,6 @@ def save_class_attendance(
         # any later correction is important to the linked parent.
         if previous_status is None and attendance_status == "PRESENT":
             continue
-        if not automatic_event_delivery_enabled("ATTENDANCE"):
-            continue
-
         parent_ids = active_parent_ids_for_students(db, [student.id])
         if not parent_ids:
             continue

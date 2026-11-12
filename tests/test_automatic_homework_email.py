@@ -118,6 +118,24 @@ class AutomaticHomeworkEmailTests(ApiTestBase):
             finally:
                 db.close()
 
+            homework_view = self.get(
+                f"/api/v1/parent/children/{self.ids['s1']}/homework",
+                self.tokens["parent"],
+            )
+            self.assertEqual(homework_view.status_code, 200, homework_view.text)
+            self.assertTrue(
+                any(item["id"] == homework_id for item in homework_view.json()["homework"])
+            )
+            notification_view = self.get("/notifications", self.tokens["parent"])
+            self.assertEqual(notification_view.status_code, 200, notification_view.text)
+            self.assertTrue(
+                any(
+                    item["reference_id"] == homework_id
+                    and item["notification_type"] == "HOMEWORK"
+                    for item in notification_view.json()["data"]
+                )
+            )
+
     def test_disabled_homework_flag_preserves_in_app_only_behavior(self):
         env = {**HOMEWORK_ENV, "EMAIL_HOMEWORK_NOTIFICATIONS_ENABLED": "false"}
         with patch.dict(os.environ, env, clear=False):
@@ -259,4 +277,3 @@ class AutomaticHomeworkEmailTests(ApiTestBase):
             db.rollback()
         finally:
             db.close()
-

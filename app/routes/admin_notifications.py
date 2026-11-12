@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -21,10 +22,12 @@ from app.schemas.admin_notification import (
     AdminNotificationSendResponse,
 )
 from app.services.parent_email_service import (
+    _safe_provider_error,
     get_email_settings,
     mask_email,
     resolve_parent_email_recipients,
 )
+from app.services.email_worker_health import read_worker_heartbeat
 
 
 router = APIRouter(
@@ -208,7 +211,7 @@ def get_email_health():
             "detail": "SMTP connection and authentication successful",
         }
     except Exception as exc:  # connectivity/auth failures are reported, not raised
-        message = " ".join(str(exc).split())[:500] or exc.__class__.__name__
+        message = _safe_provider_error(exc, settings)
         return {
             "status": "error",
             "transport": "smtp",
@@ -396,6 +399,105 @@ def send_notification(
         raise
 
     return _batch_response(batch)
+
+
+@router.get("/email-metrics")
+def get_email_metrics(db: Session = Depends(get_db)):
+    """Return aggregate outbox health without exposing recipient details."""
+
+    delivery_counts = {
+        status: count
+        for status, count in db.query(
+            EmailDelivery.status,
+            func.count(EmailDelivery.id),
+        )
+        .group_by(EmailDelivery.status)
+        .all()
+    }
+    batch_counts = {
+        status: count
+        for status, count in db.query(
+            EmailNotificationBatch.status,
+            func.count(EmailNotificationBatch.id),
+        )
+        .group_by(EmailNotificationBatch.status)
+        .all()
+    }
+    notifications_created = db.query(
+        func.coalesce(
+            func.sum(
+                case(
+                    (
+                        EmailNotificationBatch.send_in_app.is_(True),
+                        EmailNotificationBatch.parent_recipient_count,
+                    ),
+                    else_=0,
+                )
+            ),
+            0,
+        )
+    ).scalar()
+    retry_count = db.query(
+        func.coalesce(
+            func.sum(
+                case(
+                    (
+                        EmailDelivery.attempt_count > 1,
+                        EmailDelivery.attempt_count - 1,
+                    ),
+                    else_=0,
+                )
+            ),
+            0,
+        )
+    ).scalar()
+    last_worker_activity = (
+        db.query(func.max(EmailDelivery.updated_at))
+        .filter(EmailDelivery.attempt_count > 0)
+        .scalar()
+    )
+    heartbeat = read_worker_heartbeat()
+    if heartbeat and heartbeat.get("timestamp"):
+        last_worker_activity = heartbeat["timestamp"]
+    recent_failures = (
+        db.query(EmailDelivery)
+        .filter(EmailDelivery.status == "FAILED")
+        .order_by(EmailDelivery.updated_at.desc(), EmailDelivery.id.desc())
+        .limit(20)
+        .all()
+    )
+
+    return {
+        "total_batches": db.query(EmailNotificationBatch).count(),
+        "total_notifications_created": int(notifications_created or 0),
+        # Kept for clients that used the original name; this is total created.
+        "total_emails_queued": db.query(EmailDelivery).count(),
+        "total_emails_created": db.query(EmailDelivery).count(),
+        "total_queued": int(delivery_counts.get("QUEUED", 0)),
+        "currently_processing": int(delivery_counts.get("PROCESSING", 0)),
+        "total_retried": int(retry_count or 0),
+        "total_sent": int(delivery_counts.get("SENT", 0)),
+        "total_failed": int(delivery_counts.get("FAILED", 0)),
+        "delivery_counts": {
+            status: int(delivery_counts.get(status, 0))
+            for status in ("QUEUED", "PROCESSING", "RETRY", "SENT", "FAILED")
+        },
+        "retry_count": int(retry_count or 0),
+        "last_worker_activity": last_worker_activity,
+        "worker_heartbeat": heartbeat,
+        "batch_counts": batch_counts,
+        "recent_failures": [
+            {
+                "delivery_id": delivery.id,
+                "batch_id": delivery.batch_id,
+                "email": mask_email(delivery.email),
+                "attempt_count": delivery.attempt_count,
+                "reason": delivery.last_error,
+                "updated_at": delivery.updated_at,
+            }
+            for delivery in recent_failures
+        ],
+    }
 
 
 @router.get("/email-batches")

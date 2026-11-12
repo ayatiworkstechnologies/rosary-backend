@@ -1,4 +1,3 @@
-import html
 import logging
 import os
 import smtplib
@@ -15,6 +14,10 @@ from sqlalchemy.orm import Session
 
 from app.models.email_notification import EmailDelivery, EmailNotificationBatch
 from app.models.user import User
+from app.services.email_templates import (
+    render_notification_email_html,
+    render_notification_email_text,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -179,42 +182,9 @@ def render_parent_email_html(
     portal_url: str,
     unsubscribe_url: str | None = None,
 ) -> str:
-    safe_title = html.escape(title)
-    safe_message = "<br>".join(html.escape(message).splitlines())
-    safe_portal_url = html.escape(portal_url, quote=True)
-    unsubscribe_html = ""
-    if unsubscribe_url:
-        safe_unsubscribe_url = html.escape(unsubscribe_url, quote=True)
-        unsubscribe_html = (
-            f'<br><a href="{safe_unsubscribe_url}" '
-            'style="color:#475569">Unsubscribe from email notifications</a>'
-        )
-    return f"""<!doctype html>
-<html lang="en">
-  <body style="margin:0;background:#f3f7fe;font-family:Arial,sans-serif;color:#10233f">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:24px 12px">
-      <tr><td align="center">
-        <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="max-width:600px;background:#fff;border:1px solid #cfe0f5;border-radius:16px;overflow:hidden">
-          <tr><td style="background:#0b3a67;padding:22px 28px;color:#fff">
-            <div style="font-size:22px;font-weight:700">Rosary School</div>
-            <div style="font-size:12px;opacity:.85;margin-top:4px">Parent notification</div>
-          </td></tr>
-          <tr><td style="padding:30px 28px">
-            <h1 style="font-size:22px;margin:0 0 18px">{safe_title}</h1>
-            <div style="font-size:15px;line-height:1.65">{safe_message}</div>
-            <p style="margin:26px 0 0">
-              <a href="{safe_portal_url}/login" style="display:inline-block;background:#2563eb;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700">Open Parent Portal</a>
-            </p>
-          </td></tr>
-          <tr><td style="padding:16px 28px;background:#f8fafc;color:#64748b;font-size:12px">
-            This message was sent by Rosary School. Please do not reply with sensitive student information.
-            {unsubscribe_html}
-          </td></tr>
-        </table>
-      </td></tr>
-    </table>
-  </body>
-</html>"""
+    return render_notification_email_html(
+        "GENERAL", title, message, portal_url, unsubscribe_url
+    )
 
 
 class SMTPEmailTransport:
@@ -228,6 +198,7 @@ class SMTPEmailTransport:
         message: str,
         unsubscribe_url: str | None = None,
         unsubscribe_page_url: str | None = None,
+        category: str = "GENERAL",
     ) -> str:
         email = EmailMessage()
         email["Subject"] = title
@@ -242,9 +213,14 @@ class SMTPEmailTransport:
         if unsubscribe_url:
             email["List-Unsubscribe"] = f"<{unsubscribe_url}>"
             email["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
-        email.set_content(message)
+        email.set_content(
+            render_notification_email_text(
+                category, title, message, self.settings.portal_url
+            )
+        )
         email.add_alternative(
-            render_parent_email_html(
+            render_notification_email_html(
+                category,
                 title,
                 message,
                 self.settings.portal_url,
@@ -292,6 +268,7 @@ class MockEmailTransport:
         message: str,
         unsubscribe_url: str | None = None,
         unsubscribe_page_url: str | None = None,
+        category: str = "GENERAL",
     ) -> str:
         if recipient in self.fail_recipients:
             raise RuntimeError("mock provider rejection")
@@ -299,12 +276,60 @@ class MockEmailTransport:
         return f"mock-{uuid.uuid4()}"
 
 
-def _safe_provider_error(exc: Exception, settings: EmailSettings) -> str:
+def _safe_provider_error(
+    exc: Exception,
+    settings: EmailSettings,
+    *sensitive_values: str,
+) -> str:
     message = " ".join(str(exc).split())[:500] or exc.__class__.__name__
-    for secret in (settings.smtp_password, settings.smtp_username):
+    for secret in (
+        settings.smtp_password,
+        settings.smtp_username,
+        *sensitive_values,
+    ):
         if secret:
             message = message.replace(secret, "[redacted]")
     return message
+
+
+def _is_permanent_delivery_error(exc: Exception) -> bool:
+    """Return true only for SMTP failures that cannot succeed on retry."""
+
+    if isinstance(
+        exc,
+        (
+            smtplib.SMTPAuthenticationError,
+            smtplib.SMTPRecipientsRefused,
+            smtplib.SMTPSenderRefused,
+            smtplib.SMTPNotSupportedError,
+        ),
+    ):
+        return True
+    if isinstance(exc, smtplib.SMTPResponseException):
+        return 500 <= int(exc.smtp_code) <= 599
+    return False
+
+
+def _delivery_recipient_is_eligible(
+    db: Session,
+    delivery: EmailDelivery,
+) -> tuple[bool, User | None]:
+    """Re-check consent and account ownership immediately before delivery."""
+
+    parent = db.get(User, delivery.parent_user_id)
+    if (
+        parent is None
+        or parent.role != "PARENT"
+        or not parent.is_active
+        or not parent.email
+        or parent.email_verified_at is None
+        or not parent.email_notifications_enabled
+    ):
+        return False, parent
+    try:
+        return normalize_email(parent.email) == delivery.email, parent
+    except EmailNotValidError:
+        return False, parent
 
 
 def mask_email(value: str) -> str:
@@ -361,8 +386,15 @@ def process_email_queue(
         .all()
     )
     for delivery in stale:
-        delivery.status = "RETRY"
-        delivery.next_attempt_at = now
+        if delivery.attempt_count >= delivery.max_attempts:
+            delivery.status = "FAILED"
+            delivery.next_attempt_at = None
+            delivery.last_error = "Worker interrupted after maximum attempts"
+        else:
+            delivery.status = "RETRY"
+            delivery.next_attempt_at = now
+            delivery.last_error = "Recovered after interrupted worker attempt"
+        _refresh_batch_status(db, delivery.batch_id, now)
     if stale:
         db.commit()
 
@@ -421,9 +453,19 @@ def process_email_queue(
             .first()
         )
         try:
-            parent = db.get(User, delivery.parent_user_id)
+            eligible, parent = _delivery_recipient_is_eligible(db, delivery)
+            if not eligible:
+                delivery.status = "FAILED"
+                delivery.next_attempt_at = None
+                delivery.last_error = "Recipient is no longer eligible for delivery"
+                result["failed"] += 1
+                result["processed"] += 1
+                _refresh_batch_status(db, delivery.batch_id, now)
+                db.commit()
+                continue
+
             delivery_unsubscribe_url = None
-            if parent and parent.email:
+            if parent:
                 from app.services.parent_email_preferences_service import (
                     unsubscribe_urls,
                 )
@@ -440,6 +482,7 @@ def process_email_queue(
                 batch.message,
                 unsubscribe_url=delivery_unsubscribe_url,
                 unsubscribe_page_url=delivery_unsubscribe_page_url,
+                category=batch.category,
             )
             delivery.status = "SENT"
             delivery.provider_message_id = provider_id
@@ -447,8 +490,15 @@ def process_email_queue(
             delivery.sent_at = now
             result["sent"] += 1
         except Exception as exc:  # provider failures are persisted, not raised
-            delivery.last_error = _safe_provider_error(exc, settings)
-            if delivery.attempt_count >= delivery.max_attempts:
+            delivery.last_error = _safe_provider_error(
+                exc,
+                settings,
+                delivery.email,
+            )
+            if (
+                _is_permanent_delivery_error(exc)
+                or delivery.attempt_count >= delivery.max_attempts
+            ):
                 delivery.status = "FAILED"
                 delivery.next_attempt_at = None
                 result["failed"] += 1
@@ -460,10 +510,9 @@ def process_email_queue(
                 delivery.next_attempt_at = now + timedelta(seconds=backoff)
                 result["retried"] += 1
             logger.warning(
-                "Parent email delivery failed delivery_id=%s attempt=%s error=%s",
-                delivery.id,
-                delivery.attempt_count,
-                delivery.last_error,
+                "email_delivery_failed %s",
+                {"delivery_id": delivery.id, "attempt": delivery.attempt_count,
+                 "status": delivery.status, "error": delivery.last_error},
             )
 
         result["processed"] += 1

@@ -1,4 +1,5 @@
 import argparse
+import json
 import logging
 import time
 
@@ -7,6 +8,7 @@ from app.services.parent_email_service import (
     get_email_settings,
     process_email_queue,
 )
+from app.services.email_worker_health import write_worker_heartbeat
 
 
 logging.basicConfig(level=logging.INFO)
@@ -37,8 +39,17 @@ def main() -> None:
         raise SystemExit("Email provider configuration is incomplete; worker stopped")
 
     while True:
-        result = run_once()
-        logger.info("email outbox result=%s", result)
+        try:
+            result = run_once()
+        except Exception:
+            result = {"processed": 0, "sent": 0, "failed": 0, "retried": 0}
+            write_worker_heartbeat(result, status="error")
+            logger.exception("email_worker_cycle_failed")
+            if args.once:
+                raise
+        else:
+            write_worker_heartbeat(result)
+            logger.info("email_worker_cycle %s", json.dumps(result, sort_keys=True))
         if args.once:
             return
         time.sleep(settings.poll_seconds)

@@ -300,3 +300,39 @@ class ParentEmailNotificationTests(ApiTestBase):
             self.tokens["parent"],
         )
         self.assertEqual(forbidden_history.status_code, 403)
+
+    def test_fee_reminder_requires_separate_feature_permission(self):
+        payload = {
+            "target_type": "INDIVIDUAL_PARENT",
+            "parent_user_id": self.ids["parent"],
+            "category": "FEE_REMINDER",
+            "title": "EMAIL TEST fee reminder",
+            "message": "Synthetic fee reminder",
+            "send_in_app": True,
+            "send_email": False,
+            "idempotency_key": "email-test-fee-reminder",
+        }
+        with patch.dict(
+            os.environ,
+            {"EMAIL_FEE_REMINDERS_ENABLED": "false"},
+            clear=False,
+        ):
+            denied = self.post(
+                "/api/v1/admin/notifications/send",
+                self.tokens["admin"],
+                json=payload,
+            )
+        self.assertEqual(denied.status_code, 403, denied.text)
+
+        with patch.dict(
+            os.environ,
+            {"EMAIL_FEE_REMINDERS_ENABLED": "true"},
+            clear=False,
+        ):
+            accepted = self.post(
+                "/api/v1/admin/notifications/send",
+                self.tokens["admin"],
+                json=payload,
+            )
+        self.assertEqual(accepted.status_code, 200, accepted.text)
+        self.assertEqual(accepted.json()["email_queued"], 0)
