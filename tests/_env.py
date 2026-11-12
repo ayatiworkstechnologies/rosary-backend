@@ -26,6 +26,8 @@ os.environ.setdefault("ALGORITHM", "HS256")
 # values, but the suite-wide baseline is always mock and fail closed.
 os.environ["EMAIL_NOTIFICATIONS_ENABLED"] = "true"
 os.environ["EMAIL_TRANSPORT"] = "mock"
+os.environ["EMAIL_VERIFICATION_ENABLED"] = "true"
+os.environ["EMAIL_VERIFICATION_COOLDOWN_SECONDS"] = "1"
 os.environ["EMAIL_AUTOMATION_TEST_MODE"] = "true"
 os.environ["EMAIL_HOMEWORK_NOTIFICATIONS_ENABLED"] = "false"
 os.environ["EMAIL_ATTENDANCE_NOTIFICATIONS_ENABLED"] = "false"

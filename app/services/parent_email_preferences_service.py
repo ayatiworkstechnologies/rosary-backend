@@ -18,6 +18,34 @@ from app.services.parent_email_service import (
 )
 
 
+def _bool_env(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _positive_int_env(name: str, default: int, minimum: int = 1) -> int:
+    try:
+        return max(minimum, int(os.getenv(name, str(default))))
+    except ValueError:
+        return default
+
+
+def verification_email_enabled() -> bool:
+    """A narrow gate independent from automatic/bulk notification delivery."""
+
+    return _bool_env("EMAIL_VERIFICATION_ENABLED", False)
+
+
+def verification_rate_limit() -> tuple[int, int, int]:
+    return (
+        _positive_int_env("EMAIL_VERIFICATION_MAX_REQUESTS", 3),
+        _positive_int_env("EMAIL_VERIFICATION_WINDOW_SECONDS", 3600, 60),
+        _positive_int_env("EMAIL_VERIFICATION_COOLDOWN_SECONDS", 60),
+    )
+
+
 def token_digest(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
@@ -54,7 +82,7 @@ def create_verification_token(db: Session, user: User) -> str:
 
 def send_verification_email(recipient: str, raw_token: str, transport=None) -> str:
     settings = get_email_settings()
-    if not settings.enabled or not settings.provider_ready:
+    if not verification_email_enabled() or not settings.provider_ready:
         raise RuntimeError("Email provider is unavailable")
     if transport is None:
         transport = (
@@ -72,6 +100,7 @@ def send_verification_email(recipient: str, raw_token: str, transport=None) -> s
         f"This link expires in {verification_expiry_hours()} hours:\n"
         f"{verification_url}\n\n"
         "If you did not request this, you can ignore this email.",
+        category="EMAIL_VERIFICATION",
     )
 
 

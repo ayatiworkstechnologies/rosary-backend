@@ -27,6 +27,14 @@ deliveries later; request handlers never connect to SMTP.
 An inactive parent, missing/invalid address, unverified address, opt-out, or
 duplicate normalized address never receives a queued delivery.
 
+Update/delete behavior is intentionally narrow. Repeating the same business
+transition is idempotent. Result unpublishing, circular/event edits or deletes,
+exam-schedule edits or deletes, and fee metadata/status edits do not generate
+new email. Attendance sends only for a new absence or an actual stored-status
+correction. Homework has no update/delete publication endpoint. Creating email
+for any of those other operations requires an explicit product decision about
+publication and correction semantics; it has not been invented here.
+
 ## Configuration
 
 All automatic triggers default to disabled:
@@ -67,6 +75,10 @@ in-app notification.
 | Setting | Default | Behaviour |
 | --- | --- | --- |
 | `EMAIL_NOTIFICATIONS_ENABLED` | `false` | Global kill switch for queue processing and SMTP smoke tests |
+| `EMAIL_VERIFICATION_ENABLED` | `false` | Independent gate for authenticated parent-requested verification email |
+| `EMAIL_VERIFICATION_MAX_REQUESTS` | `3` | Maximum verification requests per parent within the window |
+| `EMAIL_VERIFICATION_WINDOW_SECONDS` | `3600` | Verification request counting window |
+| `EMAIL_VERIFICATION_COOLDOWN_SECONDS` | `60` | Minimum delay between verification requests |
 | `EMAIL_TRANSPORT` | `smtp` | `smtp` for a real provider; `mock` for local automated tests |
 | `EMAIL_*_NOTIFICATIONS_ENABLED` | `false` | Per-category queue switch; supported names are HOMEWORK, ATTENDANCE, RESULTS, CIRCULAR, EVENT, and FEE_PAYMENT |
 | `EMAIL_AUTOMATION_TEST_MODE` | `false` | When true, every automatic category is restricted to its own allowlist |
