@@ -44,6 +44,10 @@ EVENT_TEST_ALLOWLISTS = {
     "FEE_PAYMENT": "EMAIL_FEE_PAYMENT_TEST_RECIPIENTS",
 }
 
+OPERATIONAL_EVENT_FLAGS = {
+    category: f"EMAIL_{category}_OPERATIONAL_ENABLED" for category in EVENT_FLAGS
+}
+
 
 def _bool_env(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
@@ -59,6 +63,26 @@ def automatic_event_enabled(event_type: str) -> bool:
 
 def automatic_event_delivery_enabled(event_type: str) -> bool:
     return get_email_settings().enabled and automatic_event_enabled(event_type)
+
+
+def operational_event_enabled(event_type: str) -> bool:
+    """Default-deny approval for one automatic operational category."""
+
+    normalized = event_type.strip().upper()
+    flag = OPERATIONAL_EVENT_FLAGS.get(normalized)
+    return bool(
+        flag
+        and _bool_env("EMAIL_OPERATIONAL_NOTIFICATIONS_ENABLED", False)
+        and _bool_env(flag, False)
+    )
+
+
+def operational_notifications_enabled() -> bool:
+    return _bool_env("EMAIL_OPERATIONAL_NOTIFICATIONS_ENABLED", False)
+
+
+def automatic_test_mode_enabled() -> bool:
+    return _bool_env("EMAIL_AUTOMATION_TEST_MODE", False)
 
 
 def _test_allowlist(event_type: str) -> set[str]:
@@ -77,6 +101,38 @@ def _test_allowlist(event_type: str) -> set[str]:
     return allowlist
 
 
+def automatic_test_recipient_allowed(event_type: str, email: str) -> bool:
+    """Re-check test-mode restriction at queue and worker time."""
+
+    if not _bool_env("EMAIL_AUTOMATION_TEST_MODE", False):
+        return True
+    try:
+        normalized = normalize_email(email)
+    except Exception:
+        return False
+    return normalized in _test_allowlist(event_type)
+
+
+def admin_test_recipient_allowed(email: str) -> bool:
+    """Fail closed for manual admin email while restricted test mode is on."""
+
+    if not _bool_env("EMAIL_AUTOMATION_TEST_MODE", False):
+        return True
+    try:
+        normalized = normalize_email(email)
+    except Exception:
+        return False
+    raw = os.getenv("EMAIL_ADMIN_TEST_RECIPIENTS", "")
+    allowed: set[str] = set()
+    for value in raw.split(","):
+        try:
+            if value.strip():
+                allowed.add(normalize_email(value))
+        except Exception:
+            continue
+    return normalized in allowed
+
+
 def _apply_test_mode(
     preview: EmailRecipientPreview,
     event_type: str,
@@ -87,8 +143,11 @@ def _apply_test_mode(
     # Fail closed: an enabled test mode with a blank/invalid allowlist queues
     # no delivery. The allowlist only narrows already eligible recipients; it
     # never supplies identities or bypasses verification/preferences.
-    allowed = _test_allowlist(event_type)
-    retained = [item for item in preview.recipients if item[1] in allowed]
+    retained = [
+        item
+        for item in preview.recipients
+        if automatic_test_recipient_allowed(event_type, item[1])
+    ]
     filtered_count = len(preview.recipients) - len(retained)
     preview.recipients = retained
     return preview, filtered_count
@@ -184,8 +243,31 @@ def queue_parent_event_email(
         return AutomaticEmailQueueResult(enabled=False)
 
     unique_parent_ids = sorted(set(parent_ids))
-    preview = resolve_parent_email_recipients(db, unique_parent_ids)
+    recipient_policy = (
+        "OPERATIONAL" if operational_event_enabled(normalized_event) else "OPTIONAL"
+    )
+    preview = resolve_parent_email_recipients(
+        db,
+        unique_parent_ids,
+        policy=recipient_policy,
+    )
     preview, filtered_count = _apply_test_mode(preview, normalized_event)
+    retained_parent_ids = [parent_id for parent_id, _ in preview.recipients]
+    if retained_parent_ids:
+        preview.verified_email_recipient_count = (
+            db.query(User.id)
+            .filter(
+                User.id.in_(retained_parent_ids),
+                User.email_verified_at.isnot(None),
+            )
+            .count()
+        )
+        preview.unverified_email_recipient_count = (
+            len(retained_parent_ids) - preview.verified_email_recipient_count
+        )
+    else:
+        preview.verified_email_recipient_count = 0
+        preview.unverified_email_recipient_count = 0
 
     idempotency_key = _event_key(normalized_event, reference_key)
     existing = (
@@ -204,6 +286,7 @@ def queue_parent_event_email(
 
     canonical = {
         "event_type": normalized_event,
+        "recipient_policy": recipient_policy,
         "reference_key": reference_key,
         "parent_ids": unique_parent_ids,
         "recipients": [email for _, email in preview.recipients],
@@ -223,6 +306,8 @@ def queue_parent_event_email(
         created_by=created_by,
         target_type=f"AUTOMATIC_{normalized_event}",
         category=normalized_event,
+        recipient_policy=recipient_policy,
+        event_reference=str(reference_key)[:255],
         title=title.strip(),
         message=message.strip(),
         send_in_app=True,
@@ -235,6 +320,9 @@ def queue_parent_event_email(
         unverified_email_count=preview.unverified_email_count,
         opted_out_count=preview.opted_out_count,
         deduplicated_email_count=preview.deduplicated_email_count,
+        suppressed_email_count=preview.suppressed_email_count,
+        verified_email_recipient_count=preview.verified_email_recipient_count,
+        unverified_email_recipient_count=preview.unverified_email_recipient_count,
         completed_at=None if has_recipients else now,
     )
     db.add(batch)

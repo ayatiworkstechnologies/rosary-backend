@@ -51,7 +51,11 @@ from app.models.download_form import DownloadForm
 from app.models.parent_profile import ParentProfile
 
 from app.models.notification import Notification
-from app.models.email_notification import EmailNotificationBatch, EmailDelivery
+from app.models.email_notification import (
+    EmailDelivery,
+    EmailNotificationBatch,
+    EmailSuppression,
+)
 from app.models.email_verification import EmailVerificationToken
 # =========================================================
 # OPTIONAL EXPORT LIST
@@ -77,5 +81,6 @@ __all__ = [
     "Notification",
     "EmailNotificationBatch",
     "EmailDelivery",
+    "EmailSuppression",
     "EmailVerificationToken",
 ]

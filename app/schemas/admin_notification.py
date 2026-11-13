@@ -1,7 +1,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 
 NotificationTarget = Literal[
@@ -149,6 +149,11 @@ class AdminNotificationPreviewResponse(BaseModel):
     unverified_email_count: int
     opted_out_count: int
     deduplicated_email_count: int
+    suppressed_email_count: int
+    verified_email_recipient_count: int
+    operational_email_recipient_count: int
+    operational_unverified_email_count: int
+    test_filtered_count: int
     email_sending_enabled: bool
     provider_ready: bool
     fee_reminders_enabled: bool
@@ -162,3 +167,12 @@ class AdminNotificationSendResponse(BaseModel):
     email_queued: int = 0
     status: str
     idempotent_replay: bool = False
+
+
+class EmailSuppressionRequest(BaseModel):
+    email: EmailStr
+    reason: str = Field(min_length=3, max_length=100)
+
+
+class EmailSuppressionRemoveRequest(BaseModel):
+    email: EmailStr

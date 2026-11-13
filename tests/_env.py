@@ -35,12 +35,25 @@ os.environ["EMAIL_RESULTS_NOTIFICATIONS_ENABLED"] = "false"
 os.environ["EMAIL_CIRCULAR_NOTIFICATIONS_ENABLED"] = "false"
 os.environ["EMAIL_EVENT_NOTIFICATIONS_ENABLED"] = "false"
 os.environ["EMAIL_FEE_PAYMENT_NOTIFICATIONS_ENABLED"] = "false"
+os.environ["EMAIL_OPERATIONAL_NOTIFICATIONS_ENABLED"] = "false"
+os.environ["EMAIL_HOMEWORK_OPERATIONAL_ENABLED"] = "false"
+os.environ["EMAIL_ATTENDANCE_OPERATIONAL_ENABLED"] = "false"
+os.environ["EMAIL_RESULTS_OPERATIONAL_ENABLED"] = "false"
+os.environ["EMAIL_CIRCULAR_OPERATIONAL_ENABLED"] = "false"
+os.environ["EMAIL_EVENT_OPERATIONAL_ENABLED"] = "false"
+os.environ["EMAIL_FEE_PAYMENT_OPERATIONAL_ENABLED"] = "false"
 os.environ["EMAIL_HOMEWORK_TEST_RECIPIENTS"] = ""
 os.environ["EMAIL_ATTENDANCE_TEST_RECIPIENTS"] = ""
 os.environ["EMAIL_RESULTS_TEST_RECIPIENTS"] = ""
 os.environ["EMAIL_CIRCULAR_TEST_RECIPIENTS"] = ""
 os.environ["EMAIL_EVENT_TEST_RECIPIENTS"] = ""
 os.environ["EMAIL_FEE_PAYMENT_TEST_RECIPIENTS"] = ""
+_E2E_PARENT_EMAIL = os.environ.get(
+    "E2E_PARENT_EMAIL", "par_test@example.com"
+).strip()
+os.environ["EMAIL_ADMIN_TEST_RECIPIENTS"] = (
+    f"{_E2E_PARENT_EMAIL},par_other@example.com"
+)
 os.environ.setdefault("SMTP_FROM_EMAIL", "no-reply@example.com")
 os.environ.setdefault("EMAIL_RATE_LIMIT_PER_SECOND", "0")
 os.environ.setdefault("EMAIL_RETRY_BASE_SECONDS", "1")

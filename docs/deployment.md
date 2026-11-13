@@ -41,6 +41,18 @@ The devteam account manages only `rosary-email-worker`. Set
 `ROSARY_BACKEND_RELEASE_DIR` to the same approved versioned release before
 loading `ecosystem.config.cjs`; this must never create or replace FastAPI.
 
+The operational-policy release adds Alembic revision `a7b8c9d0e1f2`. Back up
+MySQL, confirm the current revision is `f5b2c3d4e5f6`, review the generated SQL,
+then run `alembic upgrade head` from the approved versioned release. The API and
+worker must use the same release because the worker reads the persisted
+recipient policy, event reference, and suppression table. Keep the worker
+stopped during migration/cutover; start it only after the API health and schema
+revision checks pass.
+
+All operational flags must remain false until the category approval register in
+`OPERATIONAL_EMAIL_POLICY.md` is signed off. Verification-only operation is
+independent and does not authorize optional or operational broadcast delivery.
+
 The host firewall must deny public inbound traffic to `8016`. Confirm from an
 external machine that `http://SERVER_IP:8016/health` is unreachable while the
 HTTPS domain health endpoint remains available.

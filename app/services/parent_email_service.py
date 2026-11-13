@@ -7,12 +7,17 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
+from typing import Literal
 
 from email_validator import EmailNotValidError, validate_email
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from app.models.email_notification import EmailDelivery, EmailNotificationBatch
+from app.models.email_notification import (
+    EmailDelivery,
+    EmailNotificationBatch,
+    EmailSuppression,
+)
 from app.models.user import User
 from app.services.email_templates import (
     render_notification_email_html,
@@ -21,6 +26,15 @@ from app.services.email_templates import (
 
 
 logger = logging.getLogger(__name__)
+
+RecipientPolicy = Literal["OPTIONAL", "OPERATIONAL"]
+GENERIC_OPERATIONAL_SUBJECT = "New School Update \u2014 Rosary School"
+GENERIC_OPERATIONAL_MESSAGE = (
+    "Dear Parent,\n\n"
+    "A new school update is available in the Rosary School Parent Portal.\n\n"
+    "Please sign in to view the details securely.\n\n"
+    "Rosary School Administration"
+)
 
 
 def _bool_env(name: str, default: bool = False) -> bool:
@@ -116,6 +130,10 @@ class EmailRecipientPreview:
     unverified_email_count: int = 0
     opted_out_count: int = 0
     deduplicated_email_count: int = 0
+    suppressed_email_count: int = 0
+    verified_email_recipient_count: int = 0
+    unverified_email_recipient_count: int = 0
+    test_filtered_count: int = 0
 
     @property
     def email_recipient_count(self) -> int:
@@ -130,7 +148,11 @@ def normalize_email(value: str) -> str:
 def resolve_parent_email_recipients(
     db: Session,
     parent_ids: list[int],
+    *,
+    policy: RecipientPolicy = "OPTIONAL",
 ) -> EmailRecipientPreview:
+    if policy not in {"OPTIONAL", "OPERATIONAL"}:
+        raise ValueError("Unsupported email recipient policy")
     preview = EmailRecipientPreview(parent_ids=parent_ids)
     if not parent_ids:
         return preview
@@ -158,11 +180,24 @@ def resolve_parent_email_recipients(
             preview.invalid_email_count += 1
             continue
 
-        if user.email_verified_at is None:
+        suppressed = (
+            db.query(EmailSuppression.id)
+            .filter(
+                EmailSuppression.email == normalized,
+                EmailSuppression.is_active.is_(True),
+            )
+            .first()
+        )
+        if suppressed:
+            preview.suppressed_email_count += 1
+            continue
+
+        is_verified = user.email_verified_at is not None
+        if policy == "OPTIONAL" and not is_verified:
             preview.unverified_email_count += 1
             continue
 
-        if not user.email_notifications_enabled:
+        if policy == "OPTIONAL" and not user.email_notifications_enabled:
             preview.opted_out_count += 1
             continue
 
@@ -172,8 +207,143 @@ def resolve_parent_email_recipients(
 
         seen.add(normalized)
         preview.recipients.append((user.id, normalized))
+        if is_verified:
+            preview.verified_email_recipient_count += 1
+        else:
+            preview.unverified_email_recipient_count += 1
 
     return preview
+
+
+def suppress_email_address(
+    db: Session,
+    email: str,
+    *,
+    reason: str,
+    source: str,
+    created_by: int | None = None,
+) -> EmailSuppression:
+    """Create or reactivate a normalized suppression without committing."""
+
+    normalized = normalize_email(email)
+    suppression = db.query(EmailSuppression).filter_by(email=normalized).first()
+    if suppression is None:
+        suppression = EmailSuppression(
+            email=normalized,
+            reason=reason[:100],
+            source=source[:40],
+            created_by=created_by,
+            is_active=True,
+        )
+        db.add(suppression)
+    else:
+        suppression.reason = reason[:100]
+        suppression.source = source[:40]
+        suppression.is_active = True
+        if created_by is not None:
+            suppression.created_by = created_by
+    db.flush()
+    return suppression
+
+
+def build_parent_email_readiness_report(db: Session) -> dict[str, int]:
+    """Aggregate recipient data quality without returning personal data."""
+
+    from app.models.parent_student import ParentStudent
+    from app.models.student import Student
+
+    active_parent_ids = {
+        row[0]
+        for row in db.query(User.id)
+        .filter(User.role == "PARENT", User.is_active.is_(True))
+        .all()
+    }
+    linked_active_parent_ids = {
+        row[0]
+        for row in db.query(ParentStudent.parent_user_id)
+        .join(Student, Student.id == ParentStudent.student_id)
+        .join(User, User.id == ParentStudent.parent_user_id)
+        .filter(
+            Student.is_active.is_(True),
+            User.role == "PARENT",
+            User.is_active.is_(True),
+        )
+        .distinct()
+        .all()
+    }
+    inactive_linked_parents = (
+        db.query(ParentStudent.parent_user_id)
+        .join(User, User.id == ParentStudent.parent_user_id)
+        .filter(User.role == "PARENT", User.is_active.is_(False))
+        .distinct()
+        .count()
+    )
+    active_students_without_parent = (
+        db.query(Student.id)
+        .outerjoin(ParentStudent, ParentStudent.student_id == Student.id)
+        .filter(
+            Student.is_active.is_(True),
+            ParentStudent.student_id.is_(None),
+        )
+        .count()
+    )
+    inactive_students = db.query(Student.id).filter(Student.is_active.is_(False)).count()
+    active_student_links = (
+        db.query(ParentStudent.parent_user_id, ParentStudent.student_id)
+        .join(Student, Student.id == ParentStudent.student_id)
+        .join(User, User.id == ParentStudent.parent_user_id)
+        .filter(
+            Student.is_active.is_(True),
+            User.role == "PARENT",
+            User.is_active.is_(True),
+        )
+    )
+    active_students_with_multiple_parents = (
+        active_student_links.with_entities(ParentStudent.student_id)
+        .group_by(ParentStudent.student_id)
+        .having(func.count(func.distinct(ParentStudent.parent_user_id)) > 1)
+        .count()
+    )
+    parents_with_multiple_active_students = (
+        active_student_links.with_entities(ParentStudent.parent_user_id)
+        .group_by(ParentStudent.parent_user_id)
+        .having(func.count(func.distinct(ParentStudent.student_id)) > 1)
+        .count()
+    )
+    parent_ids = sorted(linked_active_parent_ids)
+    optional = resolve_parent_email_recipients(db, parent_ids, policy="OPTIONAL")
+    operational = resolve_parent_email_recipients(
+        db, parent_ids, policy="OPERATIONAL"
+    )
+    return {
+        "active_parent_accounts": len(active_parent_ids),
+        "active_linked_parent_accounts": len(linked_active_parent_ids),
+        "active_unlinked_parent_accounts": len(
+            active_parent_ids - linked_active_parent_ids
+        ),
+        "inactive_linked_parent_accounts": inactive_linked_parents,
+        "active_students_without_parent": active_students_without_parent,
+        "inactive_students": inactive_students,
+        "active_students_with_multiple_parents": (
+            active_students_with_multiple_parents
+        ),
+        "parents_with_multiple_active_students": (
+            parents_with_multiple_active_students
+        ),
+        "optional_eligible_addresses": optional.email_recipient_count,
+        "operational_address_ready": operational.email_recipient_count,
+        "operational_unverified_addresses": (
+            operational.unverified_email_recipient_count
+        ),
+        "missing_email_addresses": operational.missing_email_count,
+        "invalid_email_addresses": operational.invalid_email_count,
+        "suppressed_addresses": operational.suppressed_email_count,
+        "duplicate_normalized_addresses": (
+            operational.deduplicated_email_count
+        ),
+        "optional_unverified_addresses": optional.unverified_email_count,
+        "optional_opted_out_addresses": optional.opted_out_count,
+    }
 
 
 def render_parent_email_html(
@@ -260,6 +430,7 @@ class MockEmailTransport:
     def __init__(self, fail_recipients: set[str] | None = None):
         self.fail_recipients = fail_recipients or set()
         self.sent: list[str] = []
+        self.messages: list[dict[str, str | None]] = []
 
     def send(
         self,
@@ -273,6 +444,15 @@ class MockEmailTransport:
         if recipient in self.fail_recipients:
             raise RuntimeError("mock provider rejection")
         self.sent.append(recipient)
+        self.messages.append(
+            {
+                "recipient": recipient,
+                "title": title,
+                "message": message,
+                "category": category,
+                "unsubscribe_url": unsubscribe_url,
+            }
+        )
         return f"mock-{uuid.uuid4()}"
 
 
@@ -313,8 +493,9 @@ def _is_permanent_delivery_error(exc: Exception) -> bool:
 def _delivery_recipient_is_eligible(
     db: Session,
     delivery: EmailDelivery,
+    batch: EmailNotificationBatch,
 ) -> tuple[bool, User | None]:
-    """Re-check consent and account ownership immediately before delivery."""
+    """Re-check policy, suppression and account ownership before delivery."""
 
     parent = db.get(User, delivery.parent_user_id)
     if (
@@ -322,14 +503,54 @@ def _delivery_recipient_is_eligible(
         or parent.role != "PARENT"
         or not parent.is_active
         or not parent.email
-        or parent.email_verified_at is None
-        or not parent.email_notifications_enabled
     ):
         return False, parent
     try:
-        return normalize_email(parent.email) == delivery.email, parent
+        if normalize_email(parent.email) != delivery.email:
+            return False, parent
     except EmailNotValidError:
         return False, parent
+
+    if (
+        db.query(EmailSuppression.id)
+        .filter(
+            EmailSuppression.email == delivery.email,
+            EmailSuppression.is_active.is_(True),
+        )
+        .first()
+    ):
+        return False, parent
+
+    from app.services.automatic_email_service import (
+        admin_test_recipient_allowed,
+        automatic_event_delivery_enabled,
+        automatic_test_recipient_allowed,
+        operational_event_enabled,
+    )
+
+    is_automatic = batch.target_type == f"AUTOMATIC_{batch.category}"
+    if batch.target_type.startswith("AUTOMATIC_") and not is_automatic:
+        return False, parent
+    if is_automatic and not (
+        automatic_event_delivery_enabled(batch.category)
+        and automatic_test_recipient_allowed(batch.category, delivery.email)
+    ):
+        return False, parent
+    if not is_automatic and not admin_test_recipient_allowed(delivery.email):
+        return False, parent
+
+    if batch.recipient_policy == "OPTIONAL":
+        return bool(
+            parent.email_verified_at is not None
+            and parent.email_notifications_enabled
+        ), parent
+
+    if batch.recipient_policy != "OPERATIONAL":
+        return False, parent
+
+    # Operational delivery is limited to automatic, explicitly approved
+    # categories. Approval is re-evaluated on every attempt.
+    return operational_event_enabled(batch.category), parent
 
 
 def mask_email(value: str) -> str:
@@ -453,7 +674,9 @@ def process_email_queue(
             .first()
         )
         try:
-            eligible, parent = _delivery_recipient_is_eligible(db, delivery)
+            if batch is None:
+                raise RuntimeError("Email batch no longer exists")
+            eligible, parent = _delivery_recipient_is_eligible(db, delivery, batch)
             if not eligible:
                 delivery.status = "FAILED"
                 delivery.next_attempt_at = None
@@ -465,7 +688,8 @@ def process_email_queue(
                 continue
 
             delivery_unsubscribe_url = None
-            if parent:
+            delivery_unsubscribe_page_url = None
+            if parent and batch.recipient_policy == "OPTIONAL":
                 from app.services.parent_email_preferences_service import (
                     unsubscribe_urls,
                 )
@@ -474,12 +698,19 @@ def process_email_queue(
                     delivery_unsubscribe_url,
                     delivery_unsubscribe_page_url,
                 ) = unsubscribe_urls(parent)
-            else:
-                delivery_unsubscribe_page_url = None
+            title = batch.title
+            message = batch.message
+            if (
+                batch.recipient_policy == "OPERATIONAL"
+                and parent
+                and parent.email_verified_at is None
+            ):
+                title = GENERIC_OPERATIONAL_SUBJECT
+                message = GENERIC_OPERATIONAL_MESSAGE
             provider_id = transport.send(
                 delivery.email,
-                batch.title,
-                batch.message,
+                title,
+                message,
                 unsubscribe_url=delivery_unsubscribe_url,
                 unsubscribe_page_url=delivery_unsubscribe_page_url,
                 category=batch.category,
@@ -502,6 +733,13 @@ def process_email_queue(
                 delivery.status = "FAILED"
                 delivery.next_attempt_at = None
                 result["failed"] += 1
+                if isinstance(exc, smtplib.SMTPRecipientsRefused):
+                    suppress_email_address(
+                        db,
+                        delivery.email,
+                        reason="Permanent recipient rejection",
+                        source="SMTP_RECIPIENT_REFUSED",
+                    )
             else:
                 delivery.status = "RETRY"
                 backoff = settings.retry_base_seconds * (

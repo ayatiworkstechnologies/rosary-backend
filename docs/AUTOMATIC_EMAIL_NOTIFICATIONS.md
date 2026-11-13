@@ -24,8 +24,13 @@ deliveries later; request handlers never connect to SMTP.
 | Password reset | — | No password-reset workflow exists |
 | Teacher announcement email | — | Teacher circular in-app notification exists; email outbox is parent-specific and no verified teacher-email preference workflow exists |
 
-An inactive parent, missing/invalid address, unverified address, opt-out, or
-duplicate normalized address never receives a queued delivery.
+Optional automatic email requires verification and opt-in. A separately
+approved operational category may queue a valid unverified or opted-out
+registered address without changing either field; the worker sends that
+unverified address only the generic secure-portal notice. Inactive accounts,
+missing/invalid addresses, active suppressions, unrelated audiences, and
+duplicate normalized addresses remain ineligible under both policies. See
+`OPERATIONAL_EMAIL_POLICY.md`.
 
 Update/delete behavior is intentionally narrow. Repeating the same business
 transition is idempotent. Result unpublishing, circular/event edits or deletes,
@@ -50,6 +55,15 @@ EMAIL_CIRCULAR_NOTIFICATIONS_ENABLED=false
 EMAIL_EVENT_NOTIFICATIONS_ENABLED=false
 EMAIL_FEE_PAYMENT_NOTIFICATIONS_ENABLED=false
 EMAIL_FEE_REMINDERS_ENABLED=false
+
+# Separate default-deny operational authorization.
+EMAIL_OPERATIONAL_NOTIFICATIONS_ENABLED=false
+EMAIL_HOMEWORK_OPERATIONAL_ENABLED=false
+EMAIL_ATTENDANCE_OPERATIONAL_ENABLED=false
+EMAIL_RESULTS_OPERATIONAL_ENABLED=false
+EMAIL_CIRCULAR_OPERATIONAL_ENABLED=false
+EMAIL_EVENT_OPERATIONAL_ENABLED=false
+EMAIL_FEE_PAYMENT_OPERATIONAL_ENABLED=false
 ```
 
 Safe test mode filters recipients after normal parent eligibility checks. It
@@ -64,6 +78,7 @@ EMAIL_RESULTS_TEST_RECIPIENTS=
 EMAIL_CIRCULAR_TEST_RECIPIENTS=
 EMAIL_EVENT_TEST_RECIPIENTS=
 EMAIL_FEE_PAYMENT_TEST_RECIPIENTS=
+EMAIL_ADMIN_TEST_RECIPIENTS=
 ```
 
 Parent in-app alerts are independent of these email flags. Disabling an email
@@ -82,7 +97,10 @@ in-app notification.
 | `EMAIL_TRANSPORT` | `smtp` | `smtp` for a real provider; `mock` for local automated tests |
 | `EMAIL_*_NOTIFICATIONS_ENABLED` | `false` | Per-category queue switch; supported names are HOMEWORK, ATTENDANCE, RESULTS, CIRCULAR, EVENT, and FEE_PAYMENT |
 | `EMAIL_AUTOMATION_TEST_MODE` | `false` | When true, every automatic category is restricted to its own allowlist |
+| `EMAIL_OPERATIONAL_NOTIFICATIONS_ENABLED` | `false` | Master authorization gate for operational recipient policy |
+| `EMAIL_*_OPERATIONAL_ENABLED` | `false` | Per-category operational approval; master and category must both be true |
 | `EMAIL_*_TEST_RECIPIENTS` | blank | Comma-separated normalized-address allowlist; blank means no recipients |
+| `EMAIL_ADMIN_TEST_RECIPIENTS` | blank | Manual Admin email allowlist in restricted test mode; blank means no recipients |
 | `EMAIL_SMOKE_TEST_RECIPIENTS` | blank | Independent allowlist for the guarded SMTP smoke command; blank refuses execution |
 | `SMTP_HOST` / `SMTP_PORT` | blank / `587` | SMTP endpoint |
 | `SMTP_USERNAME` / `SMTP_PASSWORD` | blank | Provider credentials; managed secrets only |
