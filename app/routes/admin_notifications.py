@@ -9,7 +9,11 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_admin
-from app.models.email_notification import EmailDelivery, EmailNotificationBatch
+from app.models.email_notification import (
+    EmailDelivery,
+    EmailNotificationBatch,
+    EmailSuppression,
+)
 from app.models.notification import Notification
 from app.models.parent_student import ParentStudent
 from app.models.school_class import SchoolClass
@@ -20,12 +24,26 @@ from app.schemas.admin_notification import (
     AdminNotificationPreviewResponse,
     AdminNotificationSendRequest,
     AdminNotificationSendResponse,
+    EmailSuppressionRemoveRequest,
+    EmailSuppressionRequest,
 )
 from app.services.parent_email_service import (
     _safe_provider_error,
+    build_parent_email_readiness_report,
     get_email_settings,
     mask_email,
+    normalize_email,
     resolve_parent_email_recipients,
+    suppress_email_address,
+)
+from app.services.automatic_email_service import (
+    EVENT_FLAGS,
+    OPERATIONAL_EVENT_FLAGS,
+    automatic_event_enabled,
+    automatic_test_mode_enabled,
+    admin_test_recipient_allowed,
+    operational_event_enabled,
+    operational_notifications_enabled,
 )
 from app.services.email_worker_health import read_worker_heartbeat
 from app.services.parent_email_preferences_service import verification_email_enabled
@@ -117,10 +135,17 @@ def _resolve(payload, db: Session):
         student_ids=payload.student_ids,
         parent_user_id=payload.parent_user_id,
     )
-    return parent_ids, resolve_parent_email_recipients(db, parent_ids)
+    preview = resolve_parent_email_recipients(db, parent_ids)
+    retained = [
+        item for item in preview.recipients if admin_test_recipient_allowed(item[1])
+    ]
+    preview.test_filtered_count = len(preview.recipients) - len(retained)
+    preview.recipients = retained
+    preview.verified_email_recipient_count = len(retained)
+    return parent_ids, preview
 
 
-def _preview_response(payload, email_preview) -> dict:
+def _preview_response(payload, email_preview, operational_preview) -> dict:
     settings = get_email_settings()
     return {
         "target_type": payload.target_type,
@@ -131,6 +156,17 @@ def _preview_response(payload, email_preview) -> dict:
         "unverified_email_count": email_preview.unverified_email_count,
         "opted_out_count": email_preview.opted_out_count,
         "deduplicated_email_count": email_preview.deduplicated_email_count,
+        "suppressed_email_count": email_preview.suppressed_email_count,
+        "verified_email_recipient_count": (
+            email_preview.verified_email_recipient_count
+        ),
+        "operational_email_recipient_count": (
+            operational_preview.email_recipient_count
+        ),
+        "operational_unverified_email_count": (
+            operational_preview.unverified_email_recipient_count
+        ),
+        "test_filtered_count": email_preview.test_filtered_count,
         "email_sending_enabled": settings.enabled,
         "provider_ready": settings.provider_ready,
         "fee_reminders_enabled": settings.fee_reminders_enabled,
@@ -149,7 +185,60 @@ def get_email_status():
         "batch_size": settings.batch_size,
         "rate_limit_per_second": settings.rate_limit_per_second,
         "max_attempts": settings.max_attempts,
+        "operational_master_enabled": operational_notifications_enabled(),
+        "test_mode_enabled": automatic_test_mode_enabled(),
+        "automatic_categories": {
+            category: {
+                "automatic_enabled": automatic_event_enabled(category),
+                "operational_enabled": operational_event_enabled(category),
+                "automatic_flag": EVENT_FLAGS[category],
+                "operational_flag": OPERATIONAL_EVENT_FLAGS[category],
+            }
+            for category in EVENT_FLAGS
+        },
     }
+
+
+@router.get("/recipient-readiness")
+def get_recipient_readiness(db: Session = Depends(get_db)):
+    """Return aggregate readiness counts only; never expose address lists."""
+
+    return build_parent_email_readiness_report(db)
+
+
+@router.post("/email-suppressions")
+def create_email_suppression(
+    payload: EmailSuppressionRequest,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+):
+    suppression = suppress_email_address(
+        db,
+        str(payload.email),
+        reason=payload.reason,
+        source="ADMIN",
+        created_by=current_admin.id,
+    )
+    db.commit()
+    return {
+        "status": "suppressed",
+        "email": mask_email(suppression.email),
+        "reason": suppression.reason,
+    }
+
+
+@router.post("/email-suppressions/remove")
+def remove_email_suppression(
+    payload: EmailSuppressionRemoveRequest,
+    db: Session = Depends(get_db),
+):
+    normalized = normalize_email(str(payload.email))
+    suppression = db.query(EmailSuppression).filter_by(email=normalized).first()
+    if suppression is None or not suppression.is_active:
+        raise HTTPException(status_code=404, detail="Active suppression not found")
+    suppression.is_active = False
+    db.commit()
+    return {"status": "removed", "email": mask_email(normalized)}
 
 
 @router.get("/email-health")
@@ -228,8 +317,28 @@ def preview_notification(
     payload: AdminNotificationPreviewRequest,
     db: Session = Depends(get_db),
 ):
-    _, email_preview = _resolve(payload, db)
-    return _preview_response(payload, email_preview)
+    parent_ids, email_preview = _resolve(payload, db)
+    operational_preview = resolve_parent_email_recipients(
+        db, parent_ids, policy="OPERATIONAL"
+    )
+    retained_operational = [
+        item
+        for item in operational_preview.recipients
+        if admin_test_recipient_allowed(item[1])
+    ]
+    operational_preview.recipients = retained_operational
+    retained_ids = {parent_id for parent_id, _ in retained_operational}
+    operational_preview.verified_email_recipient_count = (
+        db.query(User.id)
+        .filter(User.id.in_(retained_ids), User.email_verified_at.isnot(None))
+        .count()
+        if retained_ids
+        else 0
+    )
+    operational_preview.unverified_email_recipient_count = (
+        len(retained_ids) - operational_preview.verified_email_recipient_count
+    )
+    return _preview_response(payload, email_preview, operational_preview)
 
 
 def _batch_response(
@@ -331,6 +440,7 @@ def send_notification(
         created_by=current_admin.id,
         target_type=payload.target_type,
         category=payload.category,
+        recipient_policy="OPTIONAL",
         title=payload.title.strip(),
         message=payload.message.strip(),
         send_in_app=payload.send_in_app,
@@ -343,6 +453,11 @@ def send_notification(
         unverified_email_count=email_preview.unverified_email_count,
         opted_out_count=email_preview.opted_out_count,
         deduplicated_email_count=email_preview.deduplicated_email_count,
+        suppressed_email_count=email_preview.suppressed_email_count,
+        verified_email_recipient_count=(
+            email_preview.verified_email_recipient_count
+        ),
+        unverified_email_recipient_count=0,
         completed_at=None if payload.send_email else now,
     )
     db.add(batch)
@@ -532,12 +647,21 @@ def list_email_batches(
                 "id": batch.id,
                 "title": batch.title,
                 "category": batch.category,
+                "recipient_policy": batch.recipient_policy,
+                "event_reference": batch.event_reference,
                 "target_type": batch.target_type,
                 "status": batch.status,
                 "send_in_app": batch.send_in_app,
                 "send_email": batch.send_email,
                 "parent_recipient_count": batch.parent_recipient_count,
                 "email_recipient_count": batch.email_recipient_count,
+                "verified_email_recipient_count": (
+                    batch.verified_email_recipient_count
+                ),
+                "unverified_email_recipient_count": (
+                    batch.unverified_email_recipient_count
+                ),
+                "suppressed_email_count": batch.suppressed_email_count,
                 "delivery_counts": counts,
                 "created_at": batch.created_at,
                 "completed_at": batch.completed_at,
@@ -565,6 +689,8 @@ def get_email_batch(batch_id: int, db: Session = Depends(get_db)):
         "id": batch.id,
         "title": batch.title,
         "category": batch.category,
+        "recipient_policy": batch.recipient_policy,
+        "event_reference": batch.event_reference,
         "status": batch.status,
         "counts": {
             "parents": batch.parent_recipient_count,
@@ -574,6 +700,9 @@ def get_email_batch(batch_id: int, db: Session = Depends(get_db)):
             "unverified_email": batch.unverified_email_count,
             "opted_out": batch.opted_out_count,
             "deduplicated_email": batch.deduplicated_email_count,
+            "suppressed_email": batch.suppressed_email_count,
+            "verified_recipients": batch.verified_email_recipient_count,
+            "unverified_recipients": batch.unverified_email_recipient_count,
         },
         "deliveries": [
             {

@@ -26,6 +26,8 @@ class EmailNotificationBatch(Base):
     )
     target_type = Column(String(40), nullable=False)
     category = Column(String(40), nullable=False, default="GENERAL")
+    recipient_policy = Column(String(20), nullable=False, default="OPTIONAL")
+    event_reference = Column(String(255), nullable=True, index=True)
     title = Column(String(200), nullable=False)
     message = Column(Text, nullable=False)
     send_in_app = Column(Boolean, nullable=False, default=True)
@@ -38,6 +40,9 @@ class EmailNotificationBatch(Base):
     unverified_email_count = Column(Integer, nullable=False, default=0)
     opted_out_count = Column(Integer, nullable=False, default=0)
     deduplicated_email_count = Column(Integer, nullable=False, default=0)
+    suppressed_email_count = Column(Integer, nullable=False, default=0)
+    verified_email_recipient_count = Column(Integer, nullable=False, default=0)
+    unverified_email_recipient_count = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     completed_at = Column(DateTime, nullable=True)
 
@@ -76,4 +81,28 @@ class EmailDelivery(Base):
 
     __table_args__ = (
         UniqueConstraint("batch_id", "email", name="uq_email_delivery_batch_email"),
+    )
+
+
+class EmailSuppression(Base):
+    """A durable prohibition applied to optional and operational delivery."""
+
+    __tablename__ = "email_suppressions"
+
+    id = Column(Integer, primary_key=True)
+    email = Column(String(254), nullable=False, unique=True, index=True)
+    reason = Column(String(100), nullable=False)
+    source = Column(String(40), nullable=False, default="MANUAL")
+    created_by = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     )

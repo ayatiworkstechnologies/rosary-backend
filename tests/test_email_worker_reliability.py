@@ -12,7 +12,11 @@ from sqlalchemy.dialects import mysql
 import tests._env  # noqa: F401
 
 from app.database import SessionLocal
-from app.models.email_notification import EmailDelivery, EmailNotificationBatch
+from app.models.email_notification import (
+    EmailDelivery,
+    EmailNotificationBatch,
+    EmailSuppression,
+)
 from app.models.user import User
 from app.services.parent_email_service import (
     MockEmailTransport,
@@ -64,6 +68,9 @@ class EmailWorkerReliabilityTests(ApiTestBase):
                     EmailNotificationBatch.id.in_(batch_ids)
                 ).delete(synchronize_session=False)
             parent = db.get(User, self.ids["parent"])
+            db.query(EmailSuppression).filter_by(
+                email=parent.email.lower()
+            ).delete(synchronize_session=False)
             parent.email_verified_at = datetime.now(timezone.utc)
             parent.email_notifications_enabled = True
             parent.is_active = True
