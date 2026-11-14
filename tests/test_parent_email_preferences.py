@@ -217,7 +217,27 @@ class ParentEmailPreferenceTests(ApiTestBase):
         self.assertEqual(status_response.status_code, 200, status_response.text)
         self.assertFalse(status_response.json()["enabled"])
         self.assertTrue(status_response.json()["verification_enabled"])
+        self.assertEqual(status_response.json()["delivery_mode"], "disabled")
+        self.assertIn("In-app notifications remain available", status_response.json()["delivery_status_message"])
         self.assertEqual(health_response.json()["status"], "ok")
+
+    def test_admin_email_status_reports_test_and_available_modes(self):
+        modes = [
+            ({"EMAIL_NOTIFICATIONS_ENABLED": "true", "EMAIL_TRANSPORT": "mock", "EMAIL_AUTOMATION_TEST_MODE": "true"}, "test"),
+            ({"EMAIL_NOTIFICATIONS_ENABLED": "true", "EMAIL_TRANSPORT": "mock", "EMAIL_AUTOMATION_TEST_MODE": "false"}, "available"),
+            ({"EMAIL_NOTIFICATIONS_ENABLED": "true", "EMAIL_TRANSPORT": "smtp", "SMTP_HOST": "", "EMAIL_AUTOMATION_TEST_MODE": "false"}, "misconfigured"),
+        ]
+        for env, expected_mode in modes:
+            with self.subTest(expected_mode=expected_mode), patch.dict(
+                "os.environ", env, clear=False
+            ):
+                response = self.get(
+                    "/api/v1/admin/notifications/email-status",
+                    self.tokens["admin"],
+                )
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["delivery_mode"], expected_mode)
+            self.assertTrue(response.json()["delivery_status_message"])
 
     def test_missing_or_changed_email_cannot_be_verified(self):
         raw_token = "email-change-bound-token"
