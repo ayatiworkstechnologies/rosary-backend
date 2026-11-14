@@ -147,10 +147,20 @@ def _resolve(payload, db: Session):
 
 def _preview_response(payload, email_preview, operational_preview) -> dict:
     settings = get_email_settings()
+    excluded_email_recipient_count = (
+        email_preview.missing_email_count
+        + email_preview.invalid_email_count
+        + email_preview.unverified_email_count
+        + email_preview.opted_out_count
+        + email_preview.deduplicated_email_count
+        + email_preview.suppressed_email_count
+        + email_preview.test_filtered_count
+    )
     return {
         "target_type": payload.target_type,
         "recipient_count": len(email_preview.parent_ids),
         "email_recipient_count": email_preview.email_recipient_count,
+        "excluded_email_recipient_count": excluded_email_recipient_count,
         "missing_email_count": email_preview.missing_email_count,
         "invalid_email_count": email_preview.invalid_email_count,
         "unverified_email_count": email_preview.unverified_email_count,
@@ -176,8 +186,35 @@ def _preview_response(payload, email_preview, operational_preview) -> dict:
 @router.get("/email-status")
 def get_email_status():
     settings = get_email_settings()
+    test_mode_enabled = automatic_test_mode_enabled()
+    if not settings.enabled:
+        delivery_mode = "disabled"
+        delivery_status_message = (
+            "Optional parent email delivery is disabled by backend configuration. "
+            "In-app notifications remain available."
+        )
+    elif not settings.provider_ready:
+        delivery_mode = "misconfigured"
+        delivery_status_message = (
+            "Optional parent email delivery is enabled, but the configured "
+            "provider is not ready. Email selection is unavailable."
+        )
+    elif test_mode_enabled:
+        delivery_mode = "test"
+        delivery_status_message = (
+            "Restricted test mode is active. Optional email is available only "
+            "to approved test recipients; an empty allowlist sends to nobody."
+        )
+    else:
+        delivery_mode = "available"
+        delivery_status_message = (
+            "Optional parent email delivery is available for verified, opted-in "
+            "recipients."
+        )
     return {
         "enabled": settings.enabled,
+        "delivery_mode": delivery_mode,
+        "delivery_status_message": delivery_status_message,
         "verification_enabled": verification_email_enabled(),
         "provider_ready": settings.provider_ready,
         "transport": settings.transport,
@@ -186,7 +223,7 @@ def get_email_status():
         "rate_limit_per_second": settings.rate_limit_per_second,
         "max_attempts": settings.max_attempts,
         "operational_master_enabled": operational_notifications_enabled(),
-        "test_mode_enabled": automatic_test_mode_enabled(),
+        "test_mode_enabled": test_mode_enabled,
         "automatic_categories": {
             category: {
                 "automatic_enabled": automatic_event_enabled(category),

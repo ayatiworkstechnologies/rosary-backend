@@ -59,6 +59,7 @@ class ParentEmailNotificationTests(ApiTestBase):
         self.assertEqual(students.status_code, 200, students.text)
         self.assertEqual(students.json()["recipient_count"], 1)
         self.assertEqual(students.json()["email_recipient_count"], 1)
+        self.assertEqual(students.json()["excluded_email_recipient_count"], 0)
 
         db = SessionLocal()
         try:
@@ -114,6 +115,7 @@ class ParentEmailNotificationTests(ApiTestBase):
             self.assertEqual(response.json()["missing_email_count"], 1)
             self.assertEqual(response.json()["invalid_email_count"], 1)
             self.assertEqual(response.json()["email_recipient_count"], 0)
+            self.assertEqual(response.json()["excluded_email_recipient_count"], 2)
         finally:
             self._set_parent(
                 self.ids["parent"],
@@ -140,6 +142,7 @@ class ParentEmailNotificationTests(ApiTestBase):
             )
             self.assertEqual(response.json()["unverified_email_count"], 1)
             self.assertEqual(response.json()["opted_out_count"], 1)
+            self.assertEqual(response.json()["excluded_email_recipient_count"], 2)
         finally:
             self._set_parent(
                 self.ids["parent"], email_verified_at=datetime.now(timezone.utc)

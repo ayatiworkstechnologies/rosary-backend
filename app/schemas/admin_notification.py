@@ -144,6 +144,7 @@ class AdminNotificationPreviewResponse(BaseModel):
     target_type: NotificationTarget
     recipient_count: int
     email_recipient_count: int
+    excluded_email_recipient_count: int
     missing_email_count: int
     invalid_email_count: int
     unverified_email_count: int
