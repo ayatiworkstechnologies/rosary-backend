@@ -2995,21 +2995,104 @@ def update_teacher_exam_schedule(
 
 
     # -----------------------------------------------------
-    # UPDATE ALLOWED VALUES
+    # VALIDATE PROPOSED VALUES BEFORE APPLYING THEM
     # -----------------------------------------------------
 
-    updates = payload.model_dump(
-        exclude_unset=True
-    )
-
-    proposed_start = updates.get(
+    updates = payload.model_dump(exclude_unset=True)
+    required_fields = {
+        "class_id",
+        "exam_id",
+        "subject",
+        "exam_date",
         "start_time",
-        schedule.start_time,
-    )
-    proposed_end = updates.get(
         "end_time",
-        schedule.end_time,
+    }
+    null_required_fields = sorted(
+        field
+        for field in required_fields
+        if field in updates and updates[field] is None
     )
+    if null_required_fields:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Required schedule fields cannot be null: "
+                + ", ".join(null_required_fields)
+            ),
+        )
+
+    proposed_class_id = updates.get("class_id", schedule.class_id)
+    proposed_subject = updates.get("subject", schedule.subject)
+    proposed_exam_id = updates.get("exam_id", schedule.exam_id)
+    proposed_date = updates.get("exam_date", schedule.exam_date)
+    proposed_start = updates.get("start_time", schedule.start_time)
+    proposed_end = updates.get("end_time", schedule.end_time)
+
+    proposed_class = (
+        db.query(SchoolClass)
+        .filter(
+            SchoolClass.id == proposed_class_id,
+            SchoolClass.is_active.is_(True),
+        )
+        .first()
+    )
+    if not proposed_class:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Class not found",
+        )
+
+    proposed_assignment = (
+        db.query(TeacherClass)
+        .filter(
+            TeacherClass.teacher_user_id == current_teacher.id,
+            TeacherClass.class_id == proposed_class_id,
+        )
+        .all()
+    )
+    if not proposed_assignment:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not assigned to the proposed class",
+        )
+
+    normalized_subject = (proposed_subject or "").strip().casefold()
+    proposed_subjects = {
+        item.subject.strip().casefold()
+        for item in proposed_assignment
+        if item.subject and item.subject.strip()
+    }
+    if normalized_subject not in proposed_subjects:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not assigned to the proposed subject",
+        )
+
+    proposed_exam = (
+        db.query(Exam)
+        .filter(
+            Exam.id == proposed_exam_id,
+            Exam.is_active.is_(True),
+        )
+        .first()
+    )
+    if not proposed_exam:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Exam not found",
+        )
+
+    if proposed_exam.start_date and proposed_date < proposed_exam.start_date:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Exam date cannot be before the examination start date",
+        )
+
+    if proposed_exam.end_date and proposed_date > proposed_exam.end_date:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Exam date cannot be after the examination end date",
+        )
 
     if proposed_end <= proposed_start:
         raise HTTPException(
@@ -3017,34 +3100,29 @@ def update_teacher_exam_schedule(
             detail="End time must be after start time",
         )
 
-    if "exam_date" in updates:
-        exam = (
-            db.query(Exam)
-            .filter(Exam.id == schedule.exam_id)
-            .first()
-        )
-        proposed_date = updates["exam_date"]
+    allowed_fields = {
+        "class_id",
+        "exam_id",
+        "subject",
+        "exam_date",
+        "start_time",
+        "end_time",
+        "room",
+        "instructions",
+    }
+    for field in allowed_fields.intersection(updates):
+        setattr(schedule, field, updates[field])
 
-        if exam and exam.start_date and proposed_date < exam.start_date:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    "Exam date cannot be before the examination start date"
-                ),
-            )
-
-        if exam and exam.end_date and proposed_date > exam.end_date:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    "Exam date cannot be after the examination end date"
-                ),
-            )
-
-    for field, value in updates.items():
-        setattr(schedule, field, value)
-
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Schedule already exists for this class, exam, subject, and date"
+            ),
+        ) from error
     db.refresh(schedule)
 
     return {

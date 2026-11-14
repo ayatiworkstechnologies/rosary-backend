@@ -23,6 +23,9 @@ class TeacherExamScheduleCreate(BaseModel):
 
 
 class TeacherExamScheduleUpdate(BaseModel):
+    class_id: int | None = Field(default=None, gt=0)
+    exam_id: int | None = Field(default=None, gt=0)
+    subject: str | None = Field(default=None, min_length=1, max_length=100)
     exam_date: date | None = None
     start_time: time | None = None
     end_time: time | None = None
