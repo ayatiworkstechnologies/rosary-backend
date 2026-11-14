@@ -1,9 +1,13 @@
-﻿"""Teacher Portal workflow tests (synthetic data only)."""
+﻿
+"""Teacher Portal workflow tests (synthetic data only)."""
 import tests._env  # noqa: F401  (isolates the test database - keep first)
 
 from datetime import date, timedelta
+import unittest
 
 from tests.api_base import ApiTestBase
+from app.database import SessionLocal
+from app.models.exam import Exam
 
 
 class TeacherWorkflowTests(ApiTestBase):
@@ -155,14 +159,18 @@ class TeacherWorkflowTests(ApiTestBase):
         self.assertTrue(any(h["title"] == "Algebra worksheet" for h in items))
 
         # parents of the class receive a HOMEWORK notification
-        from app.database import SessionLocal
         from app.models.notification import Notification
+
         db = SessionLocal()
         try:
-            n = (db.query(Notification)
-                 .filter(Notification.user_id == self.ids["parent"],
-                         Notification.notification_type == "HOMEWORK")
-                 .count())
+            n = (
+                db.query(Notification)
+                .filter(
+                    Notification.user_id == self.ids["parent"],
+                    Notification.notification_type == "HOMEWORK",
+                )
+                .count()
+            )
             self.assertGreaterEqual(n, 1, "parent did not receive homework notification")
         finally:
             db.close()
@@ -184,13 +192,24 @@ class TeacherWorkflowTests(ApiTestBase):
         cid = self.ids["class_a"]
         eid = self.ids["exam"]
 
+        # FIX: Explicitly establish the published-exam precondition.
+        # This prevents the test from depending on execution order.
+        db = SessionLocal()
+        try:
+            exam = db.get(Exam, eid)
+            self.assertIsNotNone(exam, "Synthetic exam fixture is missing")
+            exam.results_published = True
+            db.commit()
+        finally:
+            db.close()
+
         exams = self.get("/api/v1/teacher/exams", tid)
         self.assertEqual(exams.status_code, 200)
         body = exams.json()
         exams_list = body if isinstance(body, list) else body.get("data", body.get("exams", []))
         self.assertTrue(any(e["id"] == eid for e in exams_list))
 
-        # the publish guard: results of a published exam cannot be edited
+        # Published exam results cannot be edited.
         guarded = self.post(
             f"/api/v1/teacher/classes/{cid}/results",
             tid,
@@ -200,7 +219,7 @@ class TeacherWorkflowTests(ApiTestBase):
         )
         self.assertIn(guarded.status_code, (403, 409))
 
-        # unpublish via the admin API, then save results
+        # Unpublish via the admin API, then save results.
         unpublish = self.patch(
             f"/api/v1/admin/exams/{eid}/publish-results",
             self.tokens["admin"],
@@ -208,7 +227,10 @@ class TeacherWorkflowTests(ApiTestBase):
         )
         self.assertEqual(unpublish.status_code, 200, unpublish.text)
 
-        sheet = self.get(f"/api/v1/teacher/classes/{cid}/results?exam_id={eid}&subject=Mathematics", tid)
+        sheet = self.get(
+            f"/api/v1/teacher/classes/{cid}/results?exam_id={eid}&subject=Mathematics",
+            tid,
+        )
         self.assertEqual(sheet.status_code, 200)
 
         save = self.post(
@@ -221,7 +243,10 @@ class TeacherWorkflowTests(ApiTestBase):
         )
         self.assertEqual(save.status_code, 200, save.text)
 
-        sheet = self.get(f"/api/v1/teacher/classes/{cid}/results?exam_id={eid}&subject=Mathematics", tid)
+        sheet = self.get(
+            f"/api/v1/teacher/classes/{cid}/results?exam_id={eid}&subject=Mathematics",
+            tid,
+        )
         by_id = {s["student_id"]: s for s in sheet.json().get("students", [])}
         self.assertEqual(by_id[self.ids["s1"]]["grade"], "A+")
 
@@ -309,17 +334,24 @@ class TeacherWorkflowTests(ApiTestBase):
         )
         self.assertEqual(update.status_code, 200, update.text)
 
-        # schedule for a class the teacher is not assigned to
-        foreign = dict(payload, class_id=self.ids["class_b"], subject="Science",
-                       start_time="14:00", end_time="15:00")
+        # Schedule for a class the teacher is not assigned to.
+        foreign = dict(
+            payload,
+            class_id=self.ids["class_b"],
+            subject="Science",
+            start_time="14:00",
+            end_time="15:00",
+        )
         foreign_resp = self.post("/api/v1/teacher/exam-schedule", tid, json=foreign)
         self.assertIn(foreign_resp.status_code, (400, 403, 404))
 
         delete = self.delete(f"/api/v1/teacher/exam-schedule/{sid}", tid)
         self.assertIn(delete.status_code, (200, 204))
 
-        gone = self.get("/api/v1/teacher/exam-schedule?class_id="
-                        f"{self.ids['class_a']}", tid)
+        gone = self.get(
+            f"/api/v1/teacher/exam-schedule?class_id={self.ids['class_a']}",
+            tid,
+        )
         self.assertEqual(gone.status_code, 200)
 
     # -------------------------------------------------
@@ -327,9 +359,13 @@ class TeacherWorkflowTests(ApiTestBase):
     # -------------------------------------------------
     def test_teacher_cannot_access_parent_or_admin(self):
         self.assertEqual(
-            self.get("/api/v1/parent/children", self.tokens["teacher"]).status_code, 403)
+            self.get("/api/v1/parent/children", self.tokens["teacher"]).status_code,
+            403,
+        )
         self.assertEqual(
-            self.get("/api/v1/admin/users", self.tokens["teacher"]).status_code, 403)
+            self.get("/api/v1/admin/users", self.tokens["teacher"]).status_code,
+            403,
+        )
 
     def test_unauthenticated_access_rejected(self):
         self.assertEqual(self.get("/api/v1/teacher/classes").status_code, 401)
@@ -339,5 +375,3 @@ class TeacherWorkflowTests(ApiTestBase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
